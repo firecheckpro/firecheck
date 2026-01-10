@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connexion - FireCheck Pro</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, #1a365d 0%, #2d3748 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .login-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px 30px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+        
+        .logo {
+            color: #e74c3c;
+            font-size: 50px;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #64748b;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        
+        .input-group {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        
+        .input-group i {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+        }
+        
+        input {
+            width: 100%;
+            padding: 15px 15px 15px 45px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 16px;
+            background: #f8fafc;
+            transition: all 0.3s;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #e74c3c;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.1);
+        }
+        
+        button {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(231, 76, 60, 0.3);
+        }
+        
+        .error {
+            background: #fee;
+            border: 2px solid #fca5a5;
+            border-radius: 10px;
+            padding: 12px;
+            margin: 20px 0;
+            color: #dc2626;
+            display: none;
+            text-align: left;
+            font-size: 14px;
+        }
+        
+        .demo-info {
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+            color: #64748b;
+            font-size: 14px;
+        }
+        
+        .demo-info code {
+            background: #f1f5f9;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        
+        @media (max-width: 480px) {
+            .login-container {
+                padding: 30px 20px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">
+            <i class="fas fa-fire-extinguisher"></i>
+        </div>
+        
+        <h1>FireCheck Pro</h1>
+        <p class="subtitle">Vérification incendie professionnelle</p>
+        
+        <div class="input-group">
+            <i class="fas fa-user"></i>
+            <input type="text" id="username" placeholder="Nom d'utilisateur" autocomplete="username">
+        </div>
+        
+        <div class="input-group">
+            <i class="fas fa-lock"></i>
+            <input type="password" id="password" placeholder="Mot de passe" autocomplete="current-password">
+        </div>
+        
+        <div id="errorMessage" class="error">
+            <i class="fas fa-exclamation-circle"></i>
+            <span>Identifiants incorrects</span>
+        </div>
+        
+        <button onclick="login()">
+            <i class="fas fa-sign-in-alt"></i>
+            Se connecter
+        </button>
+        
+        <div class="demo-info">
+            <p><strong>Version de démonstration</strong></p>
+            <p>Pour obtenir un compte personnalisé, contactez l'administrateur.</p>
+            <p style="margin-top: 10px;">
+                <small>Utilisateur test : <code>demo</code> / Mot de passe : <code>demo123</code></small>
+            </p>
+        </div>
+    </div>
+
+    <script src="auth.js"></script>
+    <script>
+        // Focus sur le premier champ
+        document.getElementById('username').focus();
+        
+        // Entrée pour valider
+        document.getElementById('password').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') login();
+        });
+        
+        function login() {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const errorDiv = document.getElementById('errorMessage');
+            
+            // Cacher l'erreur précédente
+            errorDiv.style.display = 'none';
+            
+            if (!username || !password) {
+                showError('Veuillez remplir tous les champs');
+                return;
+            }
+            
+            // Utiliser la fonction d'auth.js
+            if (typeof auth !== 'undefined' && auth.login) {
+                // Version avec auth.js
+                auth.login();
+            } else {
+                // Fallback simple
+                if (username === 'demo' && password === 'demo123') {
+                    // Connexion réussie
+                    localStorage.setItem('user_session', JSON.stringify({
+                        username: 'demo',
+                        fullName: 'Utilisateur Démo',
+                        role: 'user',
+                        loginTime: Date.now()
+                    }));
+                    window.location.href = 'index.html';
+                } else {
+                    showError('Identifiants incorrects');
+                }
+            }
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.querySelector('span').textContent = message;
+            errorDiv.style.display = 'flex';
+            errorDiv.style.alignItems = 'center';
+            errorDiv.style.gap = '10px';
+        }
+        
+        // Vérifier si déjà connecté
+        window.addEventListener('load', function() {
+            const session = localStorage.getItem('user_session');
+            if (session) {
+                // Rediriger vers l'app
+                window.location.href = 'index.html';
+            }
+        });
+    </script>
+</body>
+</html>
