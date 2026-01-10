@@ -1,0 +1,4218 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>FireCheck Pro - Vérification Incendie</title>
+
+    <!-- PWA Configuration -->
+    <link rel="manifest" href="manifest.json">
+
+    <!-- iPhone Specific -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="FireCheck Pro">
+    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192x192.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512x512.png">
+
+    <!-- Theme Colors -->
+    <meta name="theme-color" content="#e74c3c">
+    <meta name="msapplication-TileColor" content="#e74c3c">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    
+    <!-- Signature Pad -->
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.5/dist/signature_pad.umd.min.js"></script>
+    
+    <style>
+        /* Variables et Reset */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* Couleurs principales - Thème plus doux! */
+            --primary: #1a365d ;
+            --secondary: #2d6b9c;
+            --success: #2e7d32;
+            --warning: #ed6c02;
+            --danger: #c62828;
+            --purple: #6a1b9a;
+            --info: #0277bd;
+            
+            /* Matériels */
+            --extincteur: #c62828;
+            --ria: #1565c0;
+            --baes: #f57c00;
+            --alarme: #9c27b0;
+            
+            /* Planning colors */
+            --verification-color: #2e7d32;
+            --installation-color: #6a1b9a;
+            
+            /* UI - Thème plus doux pour les yeux */
+            --bg-primary: #f8fafc;
+            --bg-secondary: #eef2f7;
+            --bg-card: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            
+            /* Effets */
+            --shadow: 0 2px 8px rgba(0,0,0,0.08);
+            --shadow-hover: 0 4px 16px rgba(0,0,0,0.12);
+            --radius: 12px;
+            --transition: all 0.25s ease;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            font-size: 16px;
+            line-height: 1.6;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        .container {
+            max-width: 100%;
+            min-height: 100vh;
+            background: var(--bg-primary);
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--primary), #0f2340);
+            color: white;
+            padding: 0.8rem 1rem;
+            text-align: center;
+            box-shadow: var(--shadow);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            min-height: 60px;
+        }
+
+        .header h1 {
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        /* Navigation */
+        .nav-tabs {
+            display: flex;
+            background: var(--bg-card);
+            border-bottom: 2px solid var(--border-color);
+            position: sticky;
+            top: 60px;
+            z-index: 99;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+
+        .nav-tabs::-webkit-scrollbar {
+            display: none;
+        }
+
+        .nav-tab {
+            flex: 1;
+            min-width: 70px;
+            padding: 0.8rem 0.5rem;
+            text-align: center;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            border-bottom: 3px solid transparent;
+            transition: var(--transition);
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+
+        .nav-tab i {
+            display: block;
+            font-size: 1.1rem;
+            margin-bottom: 4px;
+        }
+
+        .nav-tab.active {
+            color: var(--secondary);
+            border-bottom-color: var(--secondary);
+            font-weight: 600;
+        }
+
+        /* Pages */
+        .page {
+            display: none;
+            padding: 1rem;
+            animation: fadeIn 0.3s ease;
+            min-height: calc(100vh - 120px);
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-bottom: 1.2rem;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.2rem;
+            padding-bottom: 0.8rem;
+            border-bottom: 2px solid var(--border-color);
+            flex-wrap: wrap;
+            gap: 0.8rem;
+        }
+
+        .card-title {
+            font-size: 1.2rem;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+        }
+
+        /* Form */
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.2rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            padding: 0.9rem;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: var(--transition);
+            background: var(--bg-card);
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            color: var(--text-primary);
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: var(--secondary);
+            box-shadow: 0 0 0 3px rgba(45, 107, 156, 0.1);
+        }
+
+        .form-textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        /* Equipment Cards */
+        .equipment-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.2rem;
+            margin: 1.5rem 0;
+        }
+
+        .equipment-card {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: var(--transition);
+            border: 2px solid transparent;
+            box-shadow: var(--shadow);
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            min-height: 180px;
+        }
+
+        .equipment-card:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-hover);
+            background: var(--bg-secondary);
+        }
+
+        .extincteur {
+            border-color: var(--extincteur);
+            background: linear-gradient(135deg, rgba(198, 40, 40, 0.05), var(--bg-card));
+        }
+
+        .ria {
+            border-color: var(--ria);
+            background: linear-gradient(135deg, rgba(21, 101, 192, 0.05), var(--bg-card));
+        }
+
+        .baes {
+            border-color: var(--baes);
+            background: linear-gradient(135deg, rgba(245, 124, 0, 0.05), var(--bg-card));
+        }
+
+        .alarme {
+            border-color: var(--alarme);
+            background: linear-gradient(135deg, rgba(156, 39, 176, 0.05), var(--bg-card));
+        }
+
+        .equipment-icon {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            color: white;
+            margin: 0 auto 1rem;
+        }
+
+        .extincteur .equipment-icon {
+            background: linear-gradient(135deg, var(--extincteur), #b71c1c);
+        }
+
+        .ria .equipment-icon {
+            background: linear-gradient(135deg, var(--ria), #0d47a1);
+        }
+
+        .baes .equipment-icon {
+            background: linear-gradient(135deg, var(--baes), #e65100);
+        }
+
+        .alarme .equipment-icon {
+            background: linear-gradient(135deg, var(--alarme), #7b1fa2);
+        }
+
+        .equipment-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+        }
+
+        /* Material List */
+        .compact-material-list {
+            margin: 1.2rem 0;
+        }
+
+        .compact-material-item {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 0.8rem;
+            margin-bottom: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            border-left: 4px solid var(--secondary);
+            transition: var(--transition);
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .compact-material-item:hover {
+            background: var(--bg-card);
+        }
+
+        .compact-material-item.extincteur {
+            border-left-color: var(--extincteur);
+        }
+
+        .compact-material-item.ria {
+            border-left-color: var(--ria);
+        }
+
+        .compact-material-item.baes {
+            border-left-color: var(--baes);
+        }
+
+        .compact-material-item.alarme {
+            border-left-color: var(--alarme);
+        }
+
+        .compact-material-item.client-item {
+            border-left-color: var(--primary);
+        }
+
+        .compact-material-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .compact-material-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.2rem;
+            font-size: 0.95rem;
+        }
+
+        .compact-material-details {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .compact-material-actions {
+            display: flex;
+            gap: 0.3rem;
+            flex-shrink: 0;
+        }
+
+        /* Détails du matériel */
+        .material-details-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            padding: 1rem;
+            margin-bottom: 0.8rem;
+            animation: slideDown 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .detail-row {
+            display: flex;
+            margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+            padding: 0.3rem 0;
+        }
+
+        .detail-label {
+            width: 150px;
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+        }
+
+        .detail-value {
+            flex: 1;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 0.8rem 1.3rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+            min-height: 44px;
+            min-width: 44px;
+        }
+
+        .btn-sm {
+            padding: 0.6rem 0.9rem;
+            font-size: 0.85rem;
+            min-height: 36px;
+            min-width: 36px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--secondary), #1a4a73);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #1a4a73, var(--secondary));
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-hover);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success), #1b5e20);
+            color: white;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, var(--danger), #b71c1c);
+            color: white;
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, var(--warning), #d56200);
+            color: white;
+        }
+
+        .btn-info {
+            background: linear-gradient(135deg, var(--info), #01579b);
+            color: white;
+        }
+
+        .btn-purple {
+            background: linear-gradient(135deg, var(--purple), #4a148c);
+            color: white;
+        }
+
+        .btn-block {
+            width: 100%;
+            margin-top: 1rem;
+        }
+
+        /* Checklist */
+        .checklist-container {
+            margin: 1.2rem 0;
+        }
+
+        .checklist-item {
+            display: flex;
+            align-items: center;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            margin-bottom: 0.8rem;
+            border: 2px solid var(--border-color);
+            transition: var(--transition);
+        }
+
+        .check-item {
+            width: 24px;
+            height: 24px;
+            margin-right: 1rem;
+            cursor: pointer;
+            accent-color: var(--success);
+            flex-shrink: 0;
+        }
+
+        .check-label {
+            flex: 1;
+            cursor: pointer;
+            color: var(--text-primary);
+        }
+
+        /* Signature */
+        .signature-container {
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--bg-card);
+            margin: 1rem 0;
+            height: 180px;
+            position: relative;
+            width: 100%;
+            touch-action: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .signature-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+            touch-action: none;
+            z-index: 10;
+            border-radius: 6px;
+        }
+
+        .signature-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--text-secondary);
+            font-size: 1rem;
+            pointer-events: none;
+            text-align: center;
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+
+        .status-ok {
+            background: rgba(46, 125, 50, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(46, 125, 50, 0.2);
+        }
+
+        .status-warning {
+            background: rgba(237, 108, 2, 0.1);
+            color: var(--warning);
+            border: 1px solid rgba(237, 108, 2, 0.2);
+        }
+
+        .status-danger {
+            background: rgba(198, 40, 40, 0.1);
+            color: var(--danger);
+            border: 1px solid rgba(198, 40, 40, 0.2);
+        }
+
+        /* Barre de recherche */
+        .search-bar {
+            margin-bottom: 1.2rem;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 0.9rem 1rem 0.9rem 3rem;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2364748b' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z'%3E%3C/path%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: 1rem center;
+            background-size: 1.2rem;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--secondary);
+            box-shadow: 0 0 0 3px rgba(45, 107, 156, 0.1);
+        }
+
+        /* CALENDRIER MODERNE - RESPONSIVE */
+        .modern-calendar {
+            margin: 1rem 0;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .calendar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+            min-width: 280px;
+        }
+
+        .calendar-month {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary);
+            text-align: center;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .calendar-controls {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .calendar-weekdays {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            margin-bottom: 0.5rem;
+            text-align: center;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            min-width: 300px;
+        }
+
+        .calendar-weekday {
+            padding: 0.5rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .calendar-days {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 0.25rem;
+            min-width: 300px;
+        }
+
+        .calendar-day {
+            aspect-ratio: 1;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: var(--transition);
+            position: relative;
+            padding: 0.3rem;
+            border: 2px solid transparent;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            min-height: 40px;
+            overflow: hidden;
+        }
+
+        .calendar-day:hover {
+            background: var(--border-color);
+            transform: scale(1.05);
+        }
+
+        .calendar-day.today {
+            background: linear-gradient(135deg, rgba(45, 107, 156, 0.1), rgba(45, 107, 156, 0.2));
+            border-color: var(--secondary);
+        }
+
+        .calendar-day.other-month {
+            opacity: 0.4;
+            background: transparent;
+        }
+
+        .calendar-day.has-events {
+            background: linear-gradient(135deg, rgba(45, 107, 156, 0.1), rgba(45, 107, 156, 0.2));
+        }
+
+        .calendar-day.selected {
+            background: linear-gradient(135deg, rgba(45, 107, 156, 0.3), rgba(45, 107, 156, 0.4));
+            border-color: var(--secondary);
+        }
+
+        .calendar-day-number {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 0.1rem;
+            text-align: center;
+            width: 100%;
+        }
+
+        .calendar-day-events {
+            display: flex;
+            gap: 2px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%;
+        }
+
+        .calendar-event-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .calendar-event-dot.verification {
+            background: var(--verification-color);
+        }
+
+        .calendar-event-dot.installation {
+            background: var(--installation-color);
+        }
+
+        .calendar-events-list {
+            margin-top: 1.5rem;
+            min-width: 280px;
+        }
+
+        .calendar-event-item {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.8rem;
+            border-left: 4px solid var(--secondary);
+            box-shadow: var(--shadow);
+            cursor: pointer;
+            transition: var(--transition);
+            word-break: break-word;
+        }
+
+        .calendar-event-item:hover {
+            transform: translateX(5px);
+            box-shadow: var(--shadow-hover);
+        }
+
+        .calendar-event-time {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.3rem;
+        }
+
+        .calendar-event-title {
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 0.3rem;
+            font-size: 0.95rem;
+        }
+
+        .calendar-event-client {
+            font-size: 0.9rem;
+            color: var(--text-primary);
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            max-width: 600px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: slideIn 0.3s ease;
+            -webkit-overflow-scrolling: touch;
+            color: var(--text-primary);
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* OK/NOK/NC Selector */
+        .ok-nok-selector {
+            display: flex;
+            gap: 0.8rem;
+            margin: 0.5rem 0;
+        }
+
+        .ok-nok-option {
+            flex: 1;
+            text-align: center;
+            padding: 0.8rem;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 0.95rem;
+            user-select: none;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .ok-nok-option.ok {
+            border-color: var(--success);
+            background: rgba(46, 125, 50, 0.1);
+        }
+
+        .ok-nok-option.nok {
+            border-color: var(--danger);
+            background: rgba(198, 40, 40, 0.1);
+        }
+
+        .ok-nok-option.nc {
+            border-color: var(--warning);
+            background: rgba(237, 108, 2, 0.1);
+        }
+
+        .ok-nok-option.selected {
+            font-weight: bold;
+        }
+
+        .ok-nok-option.ok.selected {
+            background: var(--success);
+            color: white;
+        }
+
+        .ok-nok-option.nok.selected {
+            background: var(--danger);
+            color: white;
+        }
+
+        .ok-nok-option.nc.selected {
+            background: var(--warning);
+            color: white;
+        }
+
+        /* Photo Gallery */
+        .photo-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 0.5rem;
+            margin: 1rem 0;
+        }
+
+        .photo-item {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid var(--border-color);
+        }
+
+        .photo-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .photo-item button {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem 1rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: var(--border-color);
+        }
+
+        /* Counter Badge */
+        .counter-badge {
+            display: inline-block;
+            background: var(--danger);
+            color: white;
+            font-size: 0.8rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+            font-weight: bold;
+        }
+
+        /* Alert badge */
+        .alert-badge {
+            display: inline-block;
+            background: var(--danger);
+            color: white;
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+            font-weight: bold;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        /* Age Warning */
+        .age-warning {
+            background: rgba(198, 40, 40, 0.1);
+            border: 2px solid var(--danger);
+            border-radius: 8px;
+            padding: 0.8rem;
+            margin: 0.5rem 0;
+            color: var(--danger);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Form Section */
+        .form-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.2rem;
+            margin-bottom: 1.2rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .form-section-title {
+            font-size: 1.1rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* STYLES SPÉCIFIQUES POUR LES MODALS */
+        #add-extincteur-modal .modal-content,
+        #add-ria-modal .modal-content,
+        #add-baes-modal .modal-content,
+        #add-alarme-modal .modal-content,
+        #add-intervention-modal .modal-content {
+            max-width: 500px;
+        }
+
+        /* Preview Modal */
+        #preview-modal .modal-content,
+        #facture-modal .modal-content {
+            max-width: 800px;
+            width: 100%;
+            height: 90vh;
+            padding: 0;
+        }
+
+        .preview-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .preview-header {
+            padding: 1rem;
+            background: var(--primary);
+            color: white;
+            text-align: center;
+        }
+
+        .preview-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: var(--bg-primary);
+        }
+
+        .preview-paper {
+            background: white;
+            width: 210mm;
+            min-height: 297mm;
+            margin: 0 auto;
+            padding: 20mm;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            box-sizing: border-box;
+        }
+
+        @media (max-width: 900px) {
+            .preview-paper {
+                width: 100%;
+                min-height: auto;
+                padding: 15mm;
+            }
+        }
+
+        .preview-logo {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .preview-logo h1 {
+            color: var(--primary);
+            font-size: 24pt;
+            margin-bottom: 0.5rem;
+        }
+
+        .preview-logo .subtitle {
+            color: var(--text-secondary);
+            font-size: 12pt;
+        }
+
+        .preview-section {
+            margin-bottom: 2rem;
+            page-break-inside: avoid;
+        }
+
+        .preview-section h2 {
+            color: var(--primary);
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 0.5rem;
+            margin-bottom: 1rem;
+            font-size: 14pt;
+        }
+
+        .preview-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 10pt;
+        }
+
+        .preview-table th,
+        .preview-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .preview-table th {
+            background: var(--bg-secondary);
+            font-weight: bold;
+        }
+
+        .signature-preview {
+            margin-top: 3rem;
+            page-break-inside: avoid;
+        }
+
+        .signature-line {
+            border-top: 1px solid #000;
+            width: 200px;
+            margin: 0.5rem 0;
+            display: inline-block;
+        }
+
+        .signature-box {
+            display: inline-block;
+            margin: 0 2rem;
+            text-align: center;
+            vertical-align: top;
+        }
+
+        .signature-image {
+            max-width: 150px;
+            max-height: 80px;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Facture Preview */
+        .facture-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+        }
+
+        .facture-info {
+            flex: 1;
+        }
+
+        .facture-totaux {
+            margin-top: 2rem;
+            border-top: 2px solid #000;
+            padding-top: 1rem;
+        }
+
+        .facture-ligne {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .facture-ligne-total {
+            font-weight: bold;
+            font-size: 11pt;
+        }
+
+        /* Error Message */
+        .error-message {
+            background: rgba(198, 40, 40, 0.1);
+            border: 2px solid var(--danger);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            color: var(--danger);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .error-message i {
+            font-size: 1.2rem;
+        }
+
+        /* Installation Section */
+        .installation-section {
+            background: rgba(106, 27, 154, 0.05);
+            border: 2px solid var(--purple);
+            border-radius: 8px;
+            padding: 1.2rem;
+            margin-bottom: 1.2rem;
+        }
+
+        .installation-section .form-section-title {
+            color: var(--purple);
+            border-bottom-color: var(--purple);
+        }
+
+        /* Material Type Selection */
+        .material-type-selector {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .material-type-option {
+            flex: 1;
+            text-align: center;
+            padding: 1rem;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: var(--transition);
+            background: var(--bg-card);
+        }
+
+        .material-type-option:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            background: var(--bg-secondary);
+        }
+
+        .material-type-option.selected {
+            border-color: var(--purple);
+            background: rgba(106, 27, 154, 0.1);
+        }
+
+        .material-type-option i {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            display: block;
+            color: var(--purple);
+        }
+
+        /* Facture Items */
+        .facture-items-container {
+            margin: 1rem 0;
+        }
+
+        .facture-item {
+            display: grid;
+            grid-template-columns: 3fr 1fr 1fr;
+            gap: 1rem;
+            align-items: center;
+            padding: 0.8rem;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-card);
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+        }
+
+        .facture-item-header {
+            font-weight: bold;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+
+        .facture-total {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 2px solid var(--primary);
+            font-weight: bold;
+            font-size: 1.1rem;
+            color: var(--text-primary);
+        }
+
+        /* Photo Button Styles */
+        .photo-button-container {
+            margin-top: 1rem;
+            display: flex;
+            gap: 0.8rem;
+        }
+
+        /* ==================== CSS POUR LES FILTRES PAR FAMILLE ==================== */
+
+        /* Barre de recherche améliorée */
+        .search-container {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+
+        .search-container input {
+            width: 100%;
+            padding: 0.75rem 1rem 0.75rem 3rem;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            background: white;
+            color: var(--text-primary);
+        }
+
+        .search-container .fas.fa-search {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-secondary);
+            z-index: 1;
+        }
+
+        /* Filtres par famille */
+        .family-filters {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .family-filter-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .family-filter-header i {
+            color: var(--primary);
+        }
+
+        .family-filter-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .family-filter-btn {
+            flex: 1;
+            min-width: 120px;
+            padding: 0.5rem 0.75rem;
+            border: 2px solid var(--border-color);
+            background: white;
+            color: var(--text-secondary);
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .family-filter-btn:hover {
+            border-color: var(--secondary);
+            background: rgba(45, 107, 156, 0.1);
+            color: var(--secondary);
+        }
+
+        .family-filter-btn.active {
+            border-color: var(--primary);
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+        }
+
+        .family-filter-btn i {
+            font-size: 1rem;
+        }
+
+        /* Statistiques des filtres */
+        .family-filter-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px dashed var(--border-color);
+        }
+
+        .filter-stat {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            background: var(--bg-secondary);
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+        }
+
+        .filter-stat i {
+            color: var(--primary);
+        }
+
+        /* Boutons de validation par famille */
+        .family-validation-buttons {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-top: 1rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .family-validation-buttons h4 {
+            margin: 0 0 0.75rem 0;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .family-validation-buttons h4 i {
+            color: var(--primary);
+        }
+
+        .family-validation-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .family-validation-group button {
+            flex: 1;
+            min-width: 150px;
+            padding: 0.6rem 1rem;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        /* Couleurs spécifiques par famille */
+        .family-filter-btn[onclick*="extincteur"].active {
+            background: var(--extincteur);
+            border-color: var(--extincteur);
+        }
+
+        .family-filter-btn[onclick*="ria"].active {
+            background: var(--ria);
+            border-color: var(--ria);
+        }
+
+        .family-filter-btn[onclick*="baes"].active {
+            background: var(--baes);
+            border-color: var(--baes);
+        }
+
+        .family-filter-btn[onclick*="alarme"].active {
+            background: var(--alarme);
+            border-color: var(--alarme);
+        }
+
+        /* Indicateurs visuels pour le filtre actif */
+        .compact-material-item.extincteur .compact-material-name::before,
+        .compact-material-item.ria .compact-material-name::before,
+        .compact-material-item.baes .compact-material-name::before,
+        .compact-material-item.alarme .compact-material-name::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        .compact-material-item.extincteur .compact-material-name::before {
+            background: var(--extincteur);
+        }
+
+        .compact-material-item.ria .compact-material-name::before {
+            background: var(--ria);
+        }
+
+        .compact-material-item.baes .compact-material-name::before {
+            background: var(--baes);
+        }
+
+        .compact-material-item.alarme .compact-material-name::before {
+            background: var(--alarme);
+        }
+
+        /* Amélioration des cartes de matériel pour mieux voir les filtres */
+        .compact-material-item {
+            border-left: 4px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .compact-material-item.extincteur {
+            border-left-color: var(--extincteur);
+        }
+
+        .compact-material-item.ria {
+            border-left-color: var(--ria);
+        }
+
+        .compact-material-item.baes {
+            border-left-color: var(--baes);
+        }
+
+        .compact-material-item.alarme {
+            border-left-color: var(--alarme);
+        }
+
+        .compact-material-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Amélioration des boutons */
+        .btn-success {
+            background: var(--success);
+            border-color: var(--success);
+        }
+
+        .btn-success:hover {
+            background: #27ae60;
+            border-color: #27ae60;
+        }
+
+        /* Animation pour les changements de filtre */
+        #verification-list {
+            transition: opacity 0.3s ease;
+        }
+
+        #verification-list.loading {
+            opacity: 0.5;
+        }
+
+        /* Page Header pour la vérification */
+        .page-header {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .page-header h2 {
+            font-size: 1.5rem;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .client-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .page-actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Styles pour la liste des matériels en vérification */
+        .materials-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        /* Indicateur de statut */
+        .status-indicator {
+            font-size: 0.8rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            white-space: nowrap;
+        }
+
+        .status-indicator.online {
+            background: rgba(46, 204, 113, 0.3);
+            color: #2ecc71;
+        }
+
+        .status-indicator.offline {
+            background: rgba(231, 76, 60, 0.3);
+            color: #e74c3c;
+        }
+
+        /* RESPONSIVE DESIGN - Améliorations pour mobile */
+        @media (max-width: 768px) {
+            body {
+                font-size: 14px;
+            }
+            
+            .header {
+                padding: 0.7rem 0.8rem;
+                min-height: 56px;
+            }
+            
+            .header h1 {
+                font-size: 1.1rem;
+            }
+            
+            .header-controls {
+                gap: 0.5rem;
+            }
+            
+            .status-indicator {
+                font-size: 0.7rem;
+                padding: 0.2rem 0.4rem;
+            }
+            
+            .nav-tabs {
+                top: 56px;
+            }
+            
+            .nav-tab {
+                min-width: 60px;
+                padding: 0.7rem 0.3rem;
+                font-size: 0.8rem;
+            }
+            
+            .nav-tab i {
+                font-size: 1.1rem;
+                margin-bottom: 0;
+            }
+            
+            .nav-tab span {
+                display: none;
+            }
+            
+            .page {
+                padding: 0.8rem;
+                min-height: calc(100vh - 112px);
+            }
+            
+            .card {
+                padding: 1rem;
+                margin-bottom: 0.8rem;
+                border-radius: 10px;
+            }
+            
+            .card-title {
+                font-size: 1.1rem;
+            }
+            
+            /* AMÉLIORATIONS DU CALENDRIER POUR MOBILE */
+            .modern-calendar {
+                margin: 0.5rem 0;
+                overflow-x: auto;
+                padding-bottom: 0.5rem;
+            }
+            
+            .calendar-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.8rem;
+                margin-bottom: 1rem;
+                padding: 0.5rem;
+            }
+            
+            .calendar-month {
+                font-size: 1.3rem;
+                min-width: auto;
+                text-align: center;
+                order: 1;
+            }
+            
+            .calendar-controls {
+                order: 2;
+                justify-content: center;
+                width: 100%;
+            }
+            
+            .calendar-weekdays {
+                min-width: 280px;
+                font-size: 0.8rem;
+                margin-bottom: 0.3rem;
+            }
+            
+            .calendar-weekday {
+                padding: 0.3rem 0.2rem;
+                font-size: 0.8rem;
+            }
+            
+            .calendar-days {
+                min-width: 280px;
+                gap: 0.15rem;
+            }
+            
+            .calendar-day {
+                padding: 0.2rem;
+                min-height: 35px;
+                border-radius: 6px;
+            }
+            
+            .calendar-day-number {
+                font-size: 0.8rem;
+                font-weight: 500;
+            }
+            
+            .calendar-event-dot {
+                width: 4px;
+                height: 4px;
+            }
+            
+            .calendar-events-list {
+                margin-top: 1rem;
+                min-width: auto;
+            }
+            
+            .calendar-event-item {
+                padding: 0.8rem;
+                margin-bottom: 0.6rem;
+            }
+            
+            .calendar-event-title {
+                font-size: 0.9rem;
+            }
+            
+            .calendar-event-client {
+                font-size: 0.8rem;
+            }
+            
+            /* FIN DES AMÉLIORATIONS CALENDRIER */
+            
+            .form-grid {
+                grid-template-columns: 1fr !important;
+                gap: 0.8rem;
+            }
+            
+            .form-group {
+                margin-bottom: 0.8rem;
+            }
+            
+            .form-input,
+            .form-select,
+            .form-textarea {
+                padding: 0.8rem;
+                font-size: 16px;
+                min-height: 48px;
+            }
+            
+            .btn-block {
+                padding: 0.9rem;
+                font-size: 1rem;
+            }
+            
+            .equipment-grid {
+                grid-template-columns: 1fr;
+                gap: 0.8rem;
+                margin: 1rem 0;
+            }
+            
+            .equipment-card {
+                padding: 1rem;
+                min-height: 140px;
+            }
+            
+            .equipment-icon {
+                width: 50px;
+                height: 50px;
+                font-size: 1.5rem;
+                margin-bottom: 0.8rem;
+            }
+            
+            .equipment-title {
+                font-size: 1.1rem;
+            }
+            
+            .compact-material-item {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.8rem;
+                padding: 0.8rem;
+            }
+            
+            .compact-material-info {
+                width: 100%;
+            }
+            
+            .compact-material-actions {
+                width: 100%;
+                justify-content: flex-end;
+                gap: 0.3rem;
+            }
+            
+            .detail-row {
+                flex-direction: column;
+                gap: 0.2rem;
+            }
+            
+            .detail-label {
+                width: 100%;
+                font-size: 0.85rem;
+            }
+            
+            .detail-value {
+                width: 100%;
+                font-size: 0.85rem;
+                margin-bottom: 0.5rem;
+            }
+            
+            .btn {
+                padding: 0.7rem 0.9rem;
+                font-size: 0.9rem;
+                min-height: 44px;
+            }
+            
+            .btn-sm {
+                padding: 0.5rem 0.7rem;
+                min-height: 36px;
+                font-size: 0.8rem;
+            }
+            
+            .modal-content {
+                padding: 1rem;
+                margin: 0.5rem;
+                max-height: 95vh;
+                border-radius: 10px;
+            }
+            
+            .signature-container {
+                height: 150px;
+            }
+            
+            .ok-nok-selector {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            
+            .ok-nok-option {
+                padding: 0.7rem;
+                font-size: 0.9rem;
+            }
+            
+            .status-badge {
+                font-size: 0.75rem;
+                padding: 0.3rem 0.6rem;
+            }
+            
+            .preview-paper {
+                padding: 10mm;
+                width: 100%;
+            }
+            
+            .signature-box {
+                display: block;
+                margin: 1rem 0;
+            }
+            
+            .material-type-selector {
+                flex-direction: column;
+                gap: 0.8rem;
+            }
+            
+            .material-type-option {
+                padding: 0.8rem;
+            }
+            
+            .facture-item {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+            
+            .photo-button-container {
+                flex-direction: column;
+            }
+            
+            /* Responsive pour les filtres par famille */
+            .family-filter-buttons {
+                flex-direction: column;
+            }
+            
+            .family-filter-btn {
+                min-width: 100%;
+            }
+            
+            .family-validation-group {
+                flex-direction: column;
+            }
+            
+            .family-validation-group button {
+                min-width: 100%;
+            }
+            
+            .family-filter-stats {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            
+            .page-actions {
+                flex-direction: column;
+            }
+        }
+
+        /* Très petits écrans */
+        @media (max-width: 360px) {
+            .calendar-day {
+                min-height: 30px;
+            }
+            
+            .calendar-day-number {
+                font-size: 0.75rem;
+            }
+            
+            .calendar-weekday {
+                font-size: 0.75rem;
+                padding: 0.2rem;
+            }
+            
+            .header h1 {
+                font-size: 1rem;
+            }
+            
+            .nav-tab {
+                min-width: 55px;
+            }
+        }
+
+        /* Orientation paysage sur mobile */
+        @media (max-width: 768px) and (orientation: landscape) {
+            .modern-calendar {
+                overflow-x: visible;
+            }
+            
+            .calendar-day {
+                min-height: 30px;
+            }
+        }
+
+        @media print {
+            .container, .header, .nav-tabs, .btn, .modal {
+                display: none !important;
+            }
+            
+            .preview-paper, .facture-paper {
+                box-shadow: none;
+                padding: 0;
+                width: 100%;
+                min-height: auto;
+            }
+            
+            body {
+                background: white;
+            }
+        }
+.btn-offline {
+    background: var(--warning) !important;
+}
+.btn-online {
+    background: var(--success) !important;
+}
+
+
+/* ========== STYLES POUR LE BOUTON HORS LIGNE ========== */
+
+/* Couleur en ligne (vert) */
+.btn-online {
+    background: linear-gradient(135deg, #2e7d32, #1b5e20) !important;
+    color: white !important;
+    border: none !important;
+}
+
+/* Couleur hors ligne (orange) */
+.btn-offline {
+    background: linear-gradient(135deg, #ed6c02, #d56200) !important;
+    color: white !important;
+    border: none !important;
+    animation: pulse 1.5s infinite;
+}
+
+/* Animation de pulsation pour le mode hors ligne */
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+/* Pour mobile */
+@media (max-width: 768px) {
+    #offline-toggle .mobile-hide {
+        display: none;
+    }
+    
+    #offline-toggle {
+        padding: 0.5rem !important;
+        min-width: 44px !important;
+    }
+}
+
+/* ========== STYLES POUR LE STATUT SERVEUR ========== */
+
+/* Statut connecté (vert) */
+.btn-server-connected {
+    background: linear-gradient(135deg, #2e7d32, #1b5e20) !important;
+    color: white !important;
+    border: none !important;
+}
+
+/* Statut déconnecté (rouge avec pulsation) */
+.btn-server-disconnected {
+    background: linear-gradient(135deg, #c62828, #b71c1c) !important;
+    color: white !important;
+    border: none !important;
+    animation: pulse 1.5s infinite;
+}
+
+/* Animation de pulsation pour le mode déconnecté */
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+/* Pour mobile */
+@media (max-width: 768px) {
+    #server-status .mobile-hide {
+        display: none;
+    }
+    
+    #server-status {
+        padding: 0.5rem !important;
+        min-width: 44px !important;
+    }
+}
+    </style>
+<!-- ==================== AUTHENTIFICATION ==================== -->
+    <script>
+        // Vérifier l'authentification avant tout
+        (function() {
+            // Charger auth.js
+            const script = document.createElement('script');
+            script.src = 'auth.js';
+            script.onload = function() {
+                // Vérifier si connecté
+                if (!window.auth.requireAuth()) {
+                    // Redirection vers auth.html gérée par requireAuth()
+                    return;
+                }
+                
+                // Récupérer infos utilisateur
+                const user = window.auth.checkAuth();
+                
+                // Afficher l'interface utilisateur
+                document.addEventListener('DOMContentLoaded', function() {
+                    // Ajouter en-tête avec infos utilisateur
+                    const header = document.createElement('div');
+                    header.style.cssText = `
+                        background: #f5f5f5;
+                        padding: 10px 20px;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        border-bottom: 1px solid #ddd;
+                    `;
+                    
+                    header.innerHTML = `
+                        <div>
+                            👋 Bonjour, <strong>${user.fullName}</strong>
+                            ${user.role === 'admin' ? ' 👑' : ''}
+                        </div>
+                        <button onclick="window.auth.logout()" 
+                                style="padding: 5px 15px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            Déconnexion
+                        </button>
+                    `;
+                    
+                    document.body.prepend(header);
+                });
+            };
+            document.head.appendChild(script);
+        })();
+    </script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1><i class="fas fa-fire-extinguisher"></i>FireCheck</h1>
+
+<!-- Dans la section header -->
+<div class="header-controls">
+    <button class="btn btn-sm" onclick="exportData()" title="Exporter données">
+        <i class="fas fa-download"></i>
+    </button>
+    <button id="server-status" class="btn btn-sm" title="Statut serveur">
+        <i class="fas fa-server"></i>
+        <span class="mobile-hide">Serveur</span>
+    </button>
+</div>
+        </header>
+
+        <!-- Navigation -->
+        <nav class="nav-tabs">
+            <a href="#planning" class="nav-tab" data-page="planning">
+                <i class="fas fa-calendar-alt"></i>
+                <span>Planning</span>
+            </a>
+            <a href="#clients" class="nav-tab active" data-page="clients">
+                <i class="fas fa-users"></i>
+                <span>Clients</span>
+            </a>
+            <a href="#materials" class="nav-tab" data-page="materials">
+                <i class="fas fa-clipboard-list"></i>
+                <span>Matériels</span>
+            </a>
+            <a href="#verification" class="nav-tab" data-page="verification">
+                <i class="fas fa-clipboard-check"></i>
+                <span>Vérification</span>
+            </a>
+            <a href="#signature" class="nav-tab" data-page="signature">
+                <i class="fas fa-signature"></i>
+                <span>Signature</span>
+            </a>
+            <a href="#history" class="nav-tab" data-page="history">
+                <i class="fas fa-history"></i>
+                <span>Historique</span>
+            </a>
+        </nav>
+
+        <!-- Page Planning -->
+        <section id="page-planning" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-calendar-alt"></i>
+                        Planning des interventions
+                    </h2>
+                    <button class="btn btn-success btn-sm" onclick="addIntervention()">
+                        <i class="fas fa-plus"></i> <span class="mobile-hide">Ajouter</span>
+                    </button>
+                </div>
+
+                <div class="modern-calendar">
+                    <div class="calendar-header">
+                        <div class="calendar-month" id="current-month">Mois Année</div>
+                        <div class="calendar-controls">
+                            <button class="btn btn-sm" onclick="changeMonth(-1)">
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <button class="btn btn-sm btn-primary" onclick="goToToday()">
+                                Aujourd'hui
+                            </button>
+                            <button class="btn btn-sm" onclick="changeMonth(1)">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="calendar-weekdays">
+                        <div class="calendar-weekday">Lun</div>
+                        <div class="calendar-weekday">Mar</div>
+                        <div class="calendar-weekday">Mer</div>
+                        <div class="calendar-weekday">Jeu</div>
+                        <div class="calendar-weekday">Ven</div>
+                        <div class="calendar-weekday">Sam</div>
+                        <div class="calendar-weekday">Dim</div>
+                    </div>
+
+                    <div class="calendar-days" id="calendar-days">
+                        <!-- Les jours seront générés dynamiquement -->
+                    </div>
+
+                    <div class="calendar-events-list" id="calendar-events">
+                        <!-- Les événements du jour sélectionné -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page Clients -->
+        <section id="page-clients" class="page active">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-user-plus"></i>
+                        Nouveau Client
+                    </h2>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Nom du client *</label>
+                        <input type="text" class="form-input" id="client-name" placeholder="Entreprise SARL" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Contact principal *</label>
+                        <input type="text" class="form-input" id="client-contact" placeholder="M. Dupont Jean" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Adresse *</label>
+                        <input type="text" class="form-input" id="client-address" placeholder="123 Rue Principale, 75000 Paris" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Technicien *</label>
+                        <input type="text" class="form-input" id="technician-name" placeholder="Votre nom" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Email client</label>
+                        <input type="email" class="form-input" id="client-email" placeholder="contact@entreprise.com">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Téléphone</label>
+                        <input type="tel" class="form-input" id="client-phone" placeholder="01 23 45 67 89">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Notes supplémentaires</label>
+                    <textarea class="form-textarea" id="client-notes" placeholder="Informations supplémentaires..." rows="3"></textarea>
+                </div>
+
+                <button class="btn btn-success btn-block" onclick="createClient()">
+                    <i class="fas fa-save"></i> Créer le client
+                </button>
+            </div>
+
+            <!-- Liste des clients -->
+            <div class="card" style="margin-top: 1.5rem;">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-list"></i>
+                        Liste des clients
+                    </h2>
+                </div>
+                
+                <div class="search-bar">
+                    <input type="text" class="search-input" id="client-search" placeholder="Rechercher un client..." onkeyup="searchClients()">
+                </div>
+
+                <div id="clients-list">
+                    <div class="empty-state">
+                        <i class="fas fa-users"></i>
+                        <p>Aucun client enregistré</p>
+                        <p style="font-size: 0.9rem; margin-top: 0.5rem;">Créez votre premier client ci-dessus</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page Materials -->
+        <section id="page-materials" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-clipboard-list"></i>
+                        Ajout de matériels
+                    </h2>
+                    <div class="status-badge status-ok" id="client-info-badge">
+                        <i class="fas fa-user"></i> Sélectionnez un client
+                    </div>
+                </div>
+
+                <!-- Ajout de matériel -->
+                <div class="form-section">
+                    <h3 class="form-section-title">
+                        <i class="fas fa-plus-circle"></i>
+                        Choisir un type de matériel
+                    </h3>
+                    
+                    <div class="equipment-grid" id="equipment-grid">
+                        <div class="equipment-card extincteur" onclick="openAddExtincteurModal()">
+                            <div class="equipment-icon">
+                                <i class="fas fa-fire-extinguisher"></i>
+                            </div>
+                            <div class="equipment-title">Extincteur</div>
+                            <div style="color: var(--text-secondary); font-size: 0.9rem; text-align: center;">
+                                Ajouter un extincteur<br>
+                                <small>Ajout illimité</small>
+                            </div>
+                        </div>
+                        
+                        <div class="equipment-card ria" onclick="openAddRIAModal()">
+                            <div class="equipment-icon">
+                                <i class="fas fa-faucet"></i>
+                            </div>
+                            <div class="equipment-title">RIA</div>
+                            <div style="color: var(--text-secondary); font-size: 0.9rem; text-align: center;">
+                                Robinet d'Incendie Armé<br>
+                                <small>Ajout illimité</small>
+                            </div>
+                        </div>
+                        
+                        <div class="equipment-card baes" onclick="openAddBAESModal()">
+                            <div class="equipment-icon">
+                                <i class="fas fa-lightbulb"></i>
+                            </div>
+                            <div class="equipment-title">BAES</div>
+                            <div style="color: var(--text-secondary); font-size: 0.9rem; text-align: center;">
+                                Bloc Autonome d'Éclairage<br>
+                                <small>Ajout illimité</small>
+                            </div>
+                        </div>
+
+                        <div class="equipment-card alarme" onclick="openAddAlarmeModal()">
+                            <div class="equipment-icon">
+                                <i class="fas fa-bell"></i>
+                            </div>
+                            <div class="equipment-title">Alarme Incendie</div>
+                            <div style="color: var(--text-secondary); font-size: 0.9rem; text-align: center;">
+                                Système d'alarme incendie<br>
+                                <small>Ajout illimité</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Liste des matériels ajoutés -->
+                <div class="form-section">
+                    <h3 class="form-section-title">
+                        <i class="fas fa-list-check"></i>
+                        Matériels à vérifier
+                        <span id="materials-count-badge" class="status-badge status-warning">0</span>
+                    </h3>
+                    
+                    <div class="compact-material-list" id="materials-list">
+                        <div class="empty-state">
+                            <i class="fas fa-clipboard-list"></i>
+                            <p>Aucun matériel dans la liste</p>
+                            <p style="font-size: 0.9rem; margin-top: 0.5rem;">Ajoutez des matériels ci-dessus</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1.5rem;">
+                    <button class="btn btn-primary btn-block" onclick="goToVerification()">
+                        <i class="fas fa-arrow-right"></i> Aller à la vérification
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page Vérification -->
+        <section id="page-verification" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-clipboard-check"></i>
+                        Vérification des matériels
+                    </h2>
+                    <div class="client-info">
+                        <span id="materials-count" class="status-badge status-info">
+                            <i class="fas fa-list"></i> 0 matériel(s)
+                        </span>
+                    </div>
+                </div>
+                
+                <!-- Barre de recherche -->
+                <div class="search-container">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="verification-search" 
+                           placeholder="Rechercher un matériel par ID, localisation ou type..."
+                           onkeyup="searchVerification()">
+                </div>
+                
+                <div class="page-actions">
+                    <button id="complete-btn" class="btn btn-success" onclick="completeVerification()" disabled>
+                        <i class="fas fa-check-double"></i> Terminer la vérification
+                    </button>
+                </div>
+                
+                <!-- La liste des matériels sera générée ici -->
+                <div id="verification-list" class="materials-list">
+                    <div class="empty-state">
+                        <i class="fas fa-clipboard-check"></i>
+                        <p>Aucun matériel à vérifier</p>
+                        <p style="font-size: 0.9rem; margin-top: 0.5rem;">Retournez à la page précédente pour ajouter des matériels</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page Signature -->
+        <section id="page-signature" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-signature"></i>
+                        Signatures
+                    </h2>
+                </div>
+
+                <div class="form-section">
+                    <h3 class="form-section-title">
+                        <i class="fas fa-user-tie"></i>
+                        Informations du signataire
+                    </h3>
+                    
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Nom du client signataire *</label>
+                            <input type="text" class="form-input" id="signatory-name" placeholder="Nom et prénom du client" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Fonction du signataire *</label>
+                            <input type="text" class="form-input" id="signatory-function" placeholder="Représentant légal / Responsable" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Date de signature *</label>
+                            <input type="date" class="form-input" id="signature-date" required>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Signature client -->
+                <div class="form-section">
+                    <h3 class="form-section-title">
+                        <i class="fas fa-signature"></i>
+                        Signature du client
+                    </h3>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Signature du client *</label>
+                        <div class="signature-container">
+                            <canvas id="client-signature-canvas" class="signature-canvas"></canvas>
+                            <div class="signature-placeholder" id="client-signature-placeholder">
+                                Signez ici (doigt ou stylet)
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 0.8rem; margin-top: 1rem;">
+                            <button type="button" class="btn btn-warning" onclick="clearSignature('client')" style="flex: 1;">
+                                <i class="fas fa-eraser"></i> Effacer
+                            </button>
+                            <button type="button" class="btn" onclick="undoSignature('client')" style="flex: 1; background: var(--border-color);">
+                                <i class="fas fa-undo"></i> Annuler
+                            </button>
+                        </div>
+                        <div id="client-signature-status" style="color: var(--danger); font-size: 0.9rem; margin-top: 0.5rem; display: block;">
+                            <i class="fas fa-exclamation-circle"></i> Signature requise
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Signature technicien -->
+                <div class="form-section">
+                    <h3 class="form-section-title">
+                        <i class="fas fa-user-cog"></i>
+                        Signature du technicien
+                    </h3>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Signature du technicien *</label>
+                        <div class="signature-container">
+                            <canvas id="technician-signature-canvas" class="signature-canvas"></canvas>
+                            <div class="signature-placeholder" id="technician-signature-placeholder">
+                                Signez ici (doigt ou stylet)
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 0.8rem; margin-top: 1rem;">
+                            <button type="button" class="btn btn-warning" onclick="clearSignature('technician')" style="flex: 1;">
+                                <i class="fas fa-eraser"></i> Effacer
+                            </button>
+                            <button type="button" class="btn" onclick="undoSignature('technician')" style="flex: 1; background: var(--border-color);">
+                                <i class="fas fa-undo"></i> Annuler
+                            </button>
+                        </div>
+                        <div id="technician-signature-status" style="color: var(--danger); font-size: 0.9rem; margin-top: 0.5rem; display: block;">
+                            <i class="fas fa-exclamation-circle"></i> Signature requise
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Commentaires et registre de sécurité -->
+                <div class="form-section">
+                    <h3 class="form-section-title">
+                        <i class="fas fa-comment"></i>
+                        Commentaires et registre de sécurité
+                    </h3>
+                    
+                    <!-- Registre de sécurité -->
+                    <div class="form-group">
+                        <label class="form-label">Registre de sécurité signé *</label>
+                        <div class="ok-nok-selector" style="margin-bottom: 1rem;">
+                            <div class="ok-nok-option ok" onclick="selectRegistreSecurite(this, 'oui')">Oui</div>
+                            <div class="ok-nok-option nok" onclick="selectRegistreSecurite(this, 'non')">Non</div>
+                            <div class="ok-nok-option nc" onclick="selectRegistreSecurite(this, 'indisponible')">Indisponible</div>
+                        </div>
+                        <input type="hidden" id="registre-securite" value="" required>
+                        <div id="registre-securite-status" style="color: var(--danger); font-size: 0.9rem; margin-top: 0.5rem; display: block;">
+                            <i class="fas fa-exclamation-circle"></i> Sélection requise
+                        </div>
+                    </div>
+                    
+                    <!-- Commentaires finaux -->
+                    <div class="form-group">
+                        <label class="form-label">Commentaires finaux</label>
+                        <textarea class="form-textarea" id="final-comments" placeholder="Commentaires ou observations finales..." rows="4"></textarea>
+                    </div>
+                </div>
+
+                <!-- Section Facture -->
+                <div class="form-section">
+                    <h3 class="form-section-title">
+                        <i class="fas fa-file-invoice-dollar"></i>
+                        Facturation
+                    </h3>
+                    
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Numéro de facture *</label>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <input type="text" class="form-input" id="facture-numero" placeholder="Génération automatique" required readonly>
+                                <button type="button" class="btn btn-sm" onclick="generateFactureNumber()" style="white-space: nowrap;">
+                                    <i class="fas fa-redo"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Date de facturation *</label>
+                            <input type="date" class="form-input" id="facture-date" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Description des travaux</label>
+                        <textarea class="form-textarea" id="facture-description" placeholder="Description détaillée des travaux réalisés..." rows="3"></textarea>
+                    </div>
+                    
+                    <!-- Frais de déplacement -->
+                    <div class="form-group">
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                            <input type="checkbox" id="frais-deplacement" onchange="toggleFraisDeplacement()">
+                            <label for="frais-deplacement" style="font-weight: 500;">Frais de déplacement</label>
+                            <div style="flex: 1; display: none;" id="frais-deplacement-container">
+                                <input type="number" class="form-input" id="frais-deplacement-montant" 
+                                       placeholder="Montant HT" step="0.01" min="0" value="24.99"
+                                       oninput="updateFactureTotal()" style="padding: 0.8rem;">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Items de facturation libres -->
+                    <div class="form-group">
+                        <label class="form-label">Articles facturés</label>
+                        <div class="facture-items-container">
+                            <div class="facture-item facture-item-header">
+                                <div>Description</div>
+                                <div>Quantité</div>
+                                <div>Prix unitaire HT</div>
+                            </div>
+                            <div id="facture-items-list">
+                                <!-- Les items seront ajoutés dynamiquement -->
+                            </div>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="addFactureItem()" style="margin-top: 1rem;">
+                                <i class="fas fa-plus"></i> Ajouter un article
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="facture-total">
+                        <div style="display: flex; justify-content: space-between; font-size: 1.1rem;">
+                            <span>Total HT:</span>
+                            <span id="facture-total-ht">0.00 €</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 1.1rem; margin-top: 0.5rem;">
+                            <span>TVA (20%):</span>
+                            <span id="facture-tva">0.00 €</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 1.2rem; margin-top: 0.5rem; color: var(--primary); font-weight: bold;">
+                            <span>Total TTC:</span>
+                            <span id="facture-total-ttc">0.00 €</span>
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
+                        <button class="btn btn-purple" onclick="previewFacture()" style="flex: 1;">
+                            <i class="fas fa-eye"></i> Prévisualiser Facture
+                        </button>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
+                    <button class="btn btn-primary" onclick="previewReport()" style="flex: 1;">
+                        <i class="fas fa-eye"></i> Prévisualiser
+                    </button>
+                    <button class="btn btn-success" onclick="generatePDF()" id="generate-pdf-btn" style="flex: 1;">
+                        <i class="fas fa-file-pdf"></i> Générer PDF APSAD
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page History -->
+        <section id="page-history" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-history"></i>
+                        Historique des vérifications
+                    </h2>
+                </div>
+
+                <!-- Barre de recherche -->
+                <div class="search-bar">
+                    <input type="text" class="search-input" id="history-search" placeholder="Rechercher un client, technicien ou date..." onkeyup="searchHistory()">
+                </div>
+
+                <div id="history-list">
+                    <div class="empty-state">
+                        <i class="fas fa-history"></i>
+                        <p>Aucun historique de vérification</p>
+                        <p style="font-size: 0.9rem; margin-top: 0.5rem;">Les rapports générés apparaîtront ici</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Modal Ajout Extincteur -->
+    <div class="modal" id="add-extincteur-modal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 1.2rem; color: var(--primary); font-size: 1.3rem;">
+                <i class="fas fa-fire-extinguisher"></i> Ajouter un extincteur
+            </h2>
+            
+            <!-- Sélection du type d'intervention pour extincteur -->
+            <div class="installation-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-tools"></i>
+                    Type d'intervention
+                </h3>
+                
+                <div class="material-type-selector" id="extincteur-intervention-type-selector">
+                    <div class="material-type-option selected" onclick="selectExtincteurInterventionType('verification')">
+                        <i class="fas fa-clipboard-check"></i>
+                        <div>Vérification</div>
+                        <small>Contrôle de l'existant</small>
+                    </div>
+                    <div class="material-type-option" onclick="selectExtincteurInterventionType('installation')">
+                        <i class="fas fa-wrench"></i>
+                        <div>Installation</div>
+                        <small>Nouvel équipement</small>
+                    </div>
+                </div>
+                <input type="hidden" id="extincteur-intervention-type" value="verification">
+            </div>
+            
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-info-circle"></i>
+                    Informations de base
+                </h3>
+                
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Numéro d'identification *</label>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input type="text" class="form-input" id="extincteur-id" placeholder="EX-001" required style="flex: 1;">
+                            <button type="button" class="btn btn-sm" onclick="generateExtincteurId()" style="white-space: nowrap;">
+                                <i class="fas fa-magic"></i> Générer
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Localisation *</label>
+                        <input type="text" class="form-input" id="extincteur-location" placeholder="Bâtiment A - Couloir principal - Porte 12" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Type d'extincteur *</label>
+                        <select class="form-select" id="extincteur-type" required onchange="checkExtincteurAge()">
+                            <option value="">Sélectionner un type</option>
+                            <option value="eau">Eau pulvérisée</option>
+                            <option value="eau">Eau pulvérisée + Additif</option>
+                            <option value="mousse">Mousse</option>
+                            <option value="poudre">Poudre</option>
+                            <option value="co2">CO₂</option>
+                            <option value="f">Classe F</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Fabricant *</label>
+                        <select class="form-select" id="extincteur-fabricant" required>
+                            <option value="">Sélectionner</option>
+                            <option value="andrieu">Andrieu</option>
+                            <option value="desautel">Desautel</option>
+                            <option value="eurofeu">Eurofeu</option>
+                            <option value="anaf">Anaf</option>
+                            <option value="sicli">ROT</option>
+                            <option value="sicli">Sicli</option>
+                            <option value="sicli">Argel</option>
+                            <option value="sicli">Delta Extinctors</option>
+                            <option value="sicli">France Incendie</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Modèle</label>
+                        <input type="text" class="form-input" id="extincteur-modele" placeholder="Modèle">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Année de fabrication *</label>
+                        <input type="number" class="form-input" id="extincteur-annee" 
+                               placeholder="2024" min="2000" max="2030" 
+                               required oninput="checkExtincteurAge()">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Capacité *</label>
+                        <input type="text" class="form-input" id="extincteur-capacite" placeholder="6 kg / 9L" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Date de contrôle *</label>
+                        <input type="date" class="form-input" id="extincteur-date-controle" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Prochain contrôle *</label>
+                        <input type="date" class="form-input" id="extincteur-prochain-controle" required>
+                    </div>
+                </div>
+                
+                <div id="age-warning-container" style="display: none; margin-top: 1rem;">
+                    <div class="age-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span id="age-warning-text">Attention : l'extincteur a plus de 10 ans !</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section Vérification Technique (seulement pour vérification) -->
+            <div class="form-section" id="extincteur-verification-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-clipboard-check"></i>
+                    Vérification technique
+                </h3>
+
+                <!-- État général -->
+                <div class="form-group">
+                    <label class="form-label">État général de l'appareil *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectOkNok(this, 'etat-general')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectOkNok(this, 'etat-general')">Non OK</div>
+                    </div>
+                    <textarea class="form-textarea" id="extincteur-etat-general-comment" placeholder="Commentaire..." rows="2" style="margin-top: 0.5rem;"></textarea>
+                    <input type="hidden" id="extincteur-etat-general" value="">
+                </div>
+
+                <!-- Lisibilité -->
+                <div class="form-group">
+                    <label class="form-label">Étiquette de maintenance à jour *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectOkNok(this, 'lisibilite')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectOkNok(this, 'lisibilite')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="extincteur-lisibilite" value="">
+                </div>
+
+                <!-- Panneau signalétique -->
+                <div class="form-group">
+                    <label class="form-label">Signalisation présente *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectOkNok(this, 'panneau')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectOkNok(this, 'panneau')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="extincteur-panneau" value="">
+                </div>
+
+                <!-- Goupille -->
+                <div class="form-group">
+                    <label class="form-label">Goupille *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectOkNok(this, 'goupille')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectOkNok(this, 'goupille')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="extincteur-goupille" value="">
+                </div>
+
+                <!-- Pression -->
+                <div class="form-group">
+                    <label class="form-label">Pression *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectOkNok(this, 'pression')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectOkNok(this, 'pression')">Non OK</div>
+                        <div class="ok-nok-option nc" onclick="selectOkNok(this, 'pression')">NC</div>
+                    </div>
+                    <input type="hidden" id="extincteur-pression" value="">
+                </div>
+
+                <!-- Pesée -->
+                <div class="form-group">
+                    <label class="form-label">Pesée (kg) *</label>
+                    <input type="number" class="form-input" id="extincteur-pesee" 
+                           placeholder="6.0" step="0.1" min="1" max="50" required>
+                </div>
+
+                <!-- Joints -->
+                <div class="form-group">
+                    <label class="form-label">Joints *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectOkNok(this, 'joints')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectOkNok(this, 'joints')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="extincteur-joints" value="">
+                    <div id="remplacement-joint-container" style="display: none; margin-top: 1rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="extincteur-remplacement-joint">
+                            <label for="extincteur-remplacement-joint" style="color: var(--danger);">Remplacement effectué</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Accessibilité -->
+                <div class="form-group">
+                    <label class="form-label">Accessible, visible, fixé *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectOkNok(this, 'accessibilite')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectOkNok(this, 'accessibilite')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="extincteur-accessibilite" value="">
+                </div>
+
+                <!-- Interventions -->
+                <div class="form-group">
+                    <label class="form-label">Interventions</label>
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="extincteur-maa">
+                            <label for="extincteur-maa">Maintenance additionnelle approfondie (5 ans)</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="extincteur-eiee">
+                            <label for="extincteur-eiee">Révision complète (10 ans)</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="extincteur-recharge">
+                            <label for="extincteur-recharge">Recharge</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scellé -->
+                <div class="form-group">
+                    <label class="form-label">Nouveau scellé *</label>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <input type="checkbox" id="extincteur-scelle" required>
+                        <label for="extincteur-scelle" style="font-weight: bold;">Scellé installé *</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-images"></i>
+                    Photos et observations
+                </h3>
+
+                <!-- Photos -->
+                <div class="form-group">
+                    <label class="form-label">Photos</label>
+                    <button type="button" class="btn btn-primary" onclick="addExtincteurPhoto()" style="width: 100%;">
+                        <i class="fas fa-camera"></i> Ajouter des photos
+                    </button>
+                    <input type="file" id="extincteur-photo-input" accept="image/*" multiple style="display: none;" onchange="handleExtincteurPhotos(this.files)">
+                    <div id="extincteur-photo-gallery" class="photo-gallery"></div>
+                </div>
+
+                <!-- Observations -->
+                <div class="form-group">
+                    <label class="form-label">Observations</label>
+                    <textarea class="form-textarea" id="extincteur-observations" 
+                              placeholder="Observations..." rows="3"></textarea>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
+                <button class="btn" onclick="closeExtincteurModal()" style="flex: 1; background: var(--border-color);">
+                    Annuler
+                </button>
+                <button class="btn btn-success" onclick="addExtincteurToList()" style="flex: 1;">
+                    <i class="fas fa-plus"></i> Ajouter
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Ajout RIA -->
+    <div class="modal" id="add-ria-modal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 1.2rem; color: var(--primary); font-size: 1.3rem;">
+                <i class="fas fa-faucet"></i> Ajouter un RIA
+            </h2>
+            
+            <!-- Sélection du type d'intervention pour RIA -->
+            <div class="installation-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-tools"></i>
+                    Type d'intervention
+                </h3>
+                
+                <div class="material-type-selector" id="ria-intervention-type-selector">
+                    <div class="material-type-option selected" onclick="selectRIAInterventionType('verification')">
+                        <i class="fas fa-clipboard-check"></i>
+                        <div>Vérification</div>
+                        <small>Contrôle de l'existant</small>
+                    </div>
+                    <div class="material-type-option" onclick="selectRIAInterventionType('installation')">
+                        <i class="fas fa-wrench"></i>
+                        <div>Installation</div>
+                        <small>Nouvel équipement</small>
+                    </div>
+                </div>
+                <input type="hidden" id="ria-intervention-type" value="verification">
+            </div>
+            
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-info-circle"></i>
+                    Informations de base
+                </h3>
+                
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Numéro d'identification *</label>
+                        <input type="text" class="form-input" id="ria-id" placeholder="RIA-001" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Localisation *</label>
+                        <input type="text" class="form-input" id="ria-location" placeholder="Bâtiment A - Couloir principal" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Type de RIA *</label>
+                        <select class="form-select" id="ria-type" required>
+                            <option value="">Sélectionner</option>
+                            <option value="d40">DN19</option>
+                            <option value="d45">DN25</option>
+                            <option value="d52">DN33</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Marque</label>
+                        <input type="text" class="form-input" id="ria-marque" placeholder="Marque">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Année d'installation</label>
+                        <input type="number" class="form-input" id="ria-annee" 
+                               placeholder="2024" min="2000" max="2030">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Date de vérification *</label>
+                        <input type="date" class="form-input" id="ria-date-verif" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Date de prochaine vérification *</label>
+                        <input type="date" class="form-input" id="ria-date-prochaine" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section Vérification Technique (seulement pour vérification) -->
+            <div class="form-section" id="ria-verification-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-clipboard-check"></i>
+                    Vérification technique
+                </h3>
+
+                <!-- État du tuyau -->
+                <div class="form-group">
+                    <label class="form-label">État du tuyau *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectRIANok(this, 'tuyau')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectRIANok(this, 'tuyau')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="ria-tuyau" value="">
+                </div>
+
+                <!-- Fonctionnement dévidoir -->
+                <div class="form-group">
+                    <label class="form-label">Dévidoir *</label>
+                    <textarea class="form-textarea" id="ria-devidoir" 
+                              placeholder="Fonctionnement..." 
+                              rows="2" required></textarea>
+                </div>
+
+                <!-- Type dévidoir -->
+                <div class="form-group">
+                    <label class="form-label">Type de dévidoir *</label>
+                    <div style="display: flex; gap: 1rem; margin-top: 0.5rem; flex-wrap: wrap;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="radio" id="ria-devidoir-pivotant" name="ria-devidoir-type" value="pivotant" required>
+                            <label for="ria-devidoir-pivotant">Pivotant</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="radio" id="ria-devidoir-fixe" name="ria-devidoir-type" value="fixe" required>
+                            <label for="ria-devidoir-fixe">Fixe</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- État joints -->
+                <div class="form-group">
+                    <label class="form-label">Joints et raccords *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectRIANok(this, 'joints')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectRIANok(this, 'joints')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="ria-joints" value="">
+                </div>
+
+                <!-- Mesures hydrauliques -->
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Pression statique (bar) *</label>
+                        <input type="number" class="form-input" id="ria-pression-statique" 
+                               placeholder="3.0" step="0.1" min="0" max="20" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Pression dynamique (bar) *</label>
+                        <input type="number" class="form-input" id="ria-pression-dynamique" 
+                               placeholder="2.5" step="0.1" min="0" max="20" required>
+                    </div>
+                </div>
+
+                <!-- Débit -->
+                <div class="form-group">
+                    <label class="form-label">Débit (m³/h)</label>
+                    <input type="number" class="form-input" id="ria-debit" 
+                           placeholder="2.5" step="0.1" min="0" max="10">
+                </div>
+
+                <!-- Organes de commande -->
+                <div class="form-group">
+                    <label class="form-label">Organes de commande *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectRIANok(this, 'organes')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectRIANok(this, 'organes')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="ria-organes" value="">
+                </div>
+
+                <!-- Signalisation -->
+                <div class="form-group">
+                    <label class="form-label">Signalisation *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectRIANok(this, 'signalisation')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectRIANok(this, 'signalisation')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="ria-signalisation" value="">
+                </div>
+
+                <!-- Vérification visuelle -->
+                <div class="form-group">
+                    <label class="form-label">Vérification visuelle *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectRIANok(this, 'visuel')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectRIANok(this, 'visuel')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="ria-visuel" value="">
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-images"></i>
+                    Photos et observations
+                </h3>
+
+                <!-- Photos -->
+                <div class="form-group">
+                    <label class="form-label">Photos</label>
+                    <button type="button" class="btn btn-primary" onclick="addRiaPhoto()" style="width: 100%;">
+                        <i class="fas fa-camera"></i> Ajouter des photos
+                    </button>
+                    <input type="file" id="ria-photo-input" accept="image/*" multiple style="display: none;" onchange="handleRiaPhotos(this.files)">
+                    <div id="ria-photo-gallery" class="photo-gallery"></div>
+                </div>
+
+                <!-- Observations -->
+                <div class="form-group">
+                    <label class="form-label">Observations</label>
+                    <textarea class="form-textarea" id="ria-observations" 
+                              placeholder="Observations..." rows="3"></textarea>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
+                <button class="btn" onclick="closeRIAModal()" style="flex: 1; background: var(--border-color);">
+                    Annuler
+                </button>
+                <button class="btn btn-success" onclick="addRIAtoList()" style="flex: 1;">
+                    <i class="fas fa-plus"></i> Ajouter
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Ajout BAES -->
+    <div class="modal" id="add-baes-modal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 1.2rem; color: var(--primary); font-size: 1.3rem;">
+                <i class="fas fa-lightbulb"></i> Ajouter un BAES
+            </h2>
+            
+            <!-- Sélection du type d'intervention pour BAES -->
+            <div class="installation-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-tools"></i>
+                    Type d'intervention
+                </h3>
+                
+                <div class="material-type-selector" id="baes-intervention-type-selector">
+                    <div class="material-type-option selected" onclick="selectBAESInterventionType('verification')">
+                        <i class="fas fa-clipboard-check"></i>
+                        <div>Vérification</div>
+                        <small>Contrôle de l'existant</small>
+                    </div>
+                    <div class="material-type-option" onclick="selectBAESInterventionType('installation')">
+                        <i class="fas fa-wrench"></i>
+                        <div>Installation</div>
+                        <small>Nouvel équipement</small>
+                    </div>
+                </div>
+                <input type="hidden" id="baes-intervention-type" value="verification">
+            </div>
+            
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-info-circle"></i>
+                    Informations de base
+                </h3>
+                
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Numéro d'identification *</label>
+                        <input type="text" class="form-input" id="baes-id" placeholder="BAES-001" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Localisation *</label>
+                        <input type="text" class="form-input" id="baes-location" placeholder="Bâtiment A - Couloir principal" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Type de BAES *</label>
+                        <select class="form-select" id="baes-type" required>
+                            <option value="">Sélectionner</option>
+                            <option value="antipanique">Antipanique</option>
+                            <option value="ambiance">Ambiance</option>
+                            <option value="balisage">Balisage</option>
+                            <option value="signalisation">Signalisation</option>
+                            <option value="signalisation">BAPI</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Marque *</label>
+                        <select class="form-select" id="baes-marque" required>
+                            <option value="">Sélectionner</option>
+                            <option value="legrand">Legrand</option>
+                            <option value="schneider">Schneider</option>
+                            <option value="eaton">Eaton</option>
+                            <option value="luminox">Luminox</option>
+                            <option value="luminox">Kaufel</option>
+                            <option value="luminox">Beghelli</option>
+                            <option value="luminox">Sammode</option>
+                            <option value="luminox">URA</option>
+                            <option value="luminox">Zemper</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Modèle</label>
+                        <input type="text" class="form-input" id="baes-modele" placeholder="Modèle">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Puissance (W)</label>
+                        <input type="number" class="form-input" id="baes-puissance" 
+                               placeholder="10" step="0.1" min="1" max="100">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Date de vérification *</label>
+                        <input type="date" class="form-input" id="baes-date-verif" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Date de prochaine vérification *</label>
+                        <input type="date" class="form-input" id="baes-date-prochaine" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section Vérification Technique (seulement pour vérification) -->
+            <div class="form-section" id="baes-verification-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-clipboard-check"></i>
+                    Vérification technique
+                </h3>
+
+                <!-- Vérification visuelle -->
+                <div class="form-group">
+                    <label class="form-label">Vérification visuelle *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectBAESNok(this, 'visuel')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectBAESNok(this, 'visuel')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="baes-visuel" value="">
+                </div>
+
+                <!-- État des lampes -->
+                <div class="form-group">
+                    <label class="form-label">État des lampes *</label>
+                    <div style="margin-bottom: 0.5rem;">
+                        <div style="display: flex; gap: 1rem; margin-top: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="radio" id="baes-lampe-ampoule" name="baes-lampe-type" value="ampoule" required>
+                                <label for="baes-lampe-ampoule">Ampoule</label>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="radio" id="baes-lampe-led" name="baes-lampe-type" value="led">
+                                <label for="baes-lampe-led">LED</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectBAESNok(this, 'lampe')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectBAESNok(this, 'lampe')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="baes-lampe" value="">
+                </div>
+
+                <!-- Batteries -->
+                <div class="form-group">
+                    <label class="form-label">Batteries *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectBAESNok(this, 'batteries')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectBAESNok(this, 'batteries')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="baes-batteries" value="">
+                </div>
+
+                <!-- Fonctionnement -->
+                <div class="form-group">
+                    <label class="form-label">Fonctionnement *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectBAESNok(this, 'fonctionnement')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectBAESNok(this, 'fonctionnement')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="baes-fonctionnement" value="">
+                </div>
+
+                <!-- Autonomie -->
+                <div class="form-group">
+                    <label class="form-label">Autonomie (1h min) *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectBAESNok(this, 'autonomie')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectBAESNok(this, 'autonomie')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="baes-autonomie" value="">
+                </div>
+
+                <!-- Signalisation -->
+                <div class="form-group">
+                    <label class="form-label">Signalisation *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectBAESNok(this, 'signalisation')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectBAESNok(this, 'signalisation')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="baes-signalisation" value="">
+                </div>
+
+                <!-- Accessibilité -->
+                <div class="form-group">
+                    <label class="form-label">Accessibilité *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectBAESNok(this, 'accessibilite')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectBAESNok(this, 'accessibilite')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="baes-accessibilite" value="">
+                </div>
+
+                <!-- Tests supplémentaires -->
+                <div class="form-group">
+                    <label class="form-label">Tests effectués</label>
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="baes-test-autonomie">
+                            <label for="baes-test-autonomie">Test autonomie</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="baes-test-charge">
+                            <label for="baes-test-charge">Test charge batteries</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="baes-test-fonction">
+                            <label for="baes-test-fonction">Test fonctionnement</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-images"></i>
+                    Photos et observations
+                </h3>
+
+                <!-- Photos -->
+                <div class="form-group">
+                    <label class="form-label">Photos</label>
+                    <button type="button" class="btn btn-primary" onclick="addBaesPhoto()" style="width: 100%;">
+                        <i class="fas fa-camera"></i> Ajouter des photos
+                    </button>
+                    <input type="file" id="baes-photo-input" accept="image/*" multiple style="display: none;" onchange="handleBaesPhotos(this.files)">
+                    <div id="baes-photo-gallery" class="photo-gallery"></div>
+                </div>
+
+                <!-- Observations -->
+                <div class="form-group">
+                    <label class="form-label">Observations</label>
+                    <textarea class="form-textarea" id="baes-observations" 
+                              placeholder="Observations..." rows="3"></textarea>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
+                <button class="btn" onclick="closeBAESModal()" style="flex: 1; background: var(--border-color);">
+                    Annuler
+                </button>
+                <button class="btn btn-success" onclick="addBAEStoList()" style="flex: 1;">
+                    <i class="fas fa-plus"></i> Ajouter
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Ajout Alarme Incendie -->
+    <div class="modal" id="add-alarme-modal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 1.2rem; color: var(--primary); font-size: 1.3rem;">
+                <i class="fas fa-bell"></i> Ajouter une Alarme Incendie
+            </h2>
+            
+            <!-- Sélection du type d'intervention pour alarme -->
+            <div class="installation-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-tools"></i>
+                    Type d'intervention
+                </h3>
+                
+                <div class="material-type-selector" id="alarme-intervention-type-selector">
+                    <div class="material-type-option selected" onclick="selectAlarmeInterventionType('verification')">
+                        <i class="fas fa-clipboard-check"></i>
+                        <div>Vérification</div>
+                        <small>Contrôle de l'existant</small>
+                    </div>
+                    <div class="material-type-option" onclick="selectAlarmeInterventionType('installation')">
+                        <i class="fas fa-wrench"></i>
+                        <div>Installation</div>
+                        <small>Nouvel équipement</small>
+                    </div>
+                </div>
+                <input type="hidden" id="alarme-intervention-type" value="verification">
+            </div>
+            
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-info-circle"></i>
+                    Informations de base
+                </h3>
+                
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Numéro d'identification *</label>
+                        <input type="text" class="form-input" id="alarme-id" placeholder="AL-001" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Localisation *</label>
+                        <input type="text" class="form-input" id="alarme-location" placeholder="Bâtiment A - Couloir principal" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Type d'alarme *</label>
+                        <select class="form-select" id="alarme-type" required>
+                            <option value="">Sélectionner</option>
+                            <option value="detection">Type 4 (pile ou batterie)</option>
+                            <option value="alerte">Type 4 sur secteur</option>
+                            <option value="evacuation">Type 3</option>
+                            <option value="complet">Type 2</option>
+                            <option value="complet">Type 1</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Marque *</label>
+                        <select class="form-select" id="alarme-marque" required>
+                            <option value="">Sélectionner</option>
+                            <option value="siemens">Siemens</option>
+                            <option value="apollo">Eaton</option>
+                            <option value="esser">Neutronic</option>
+                            <option value="bosch">Cofem</option>
+                            <option value="notifier">honeywell</option>
+                            <option value="schneider">Schneider</option>
+                            <option value="autronica">Chubb</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Modèle</label>
+                        <input type="text" class="form-input" id="alarme-modele" placeholder="Modèle">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Année d'installation</label>
+                        <input type="number" class="form-input" id="alarme-annee" 
+                               placeholder="2024" min="2000" max="2030">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Date de vérification *</label>
+                        <input type="date" class="form-input" id="alarme-date-verif" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Date de prochaine vérification *</label>
+                        <input type="date" class="form-input" id="alarme-date-prochaine" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section Vérification Technique (seulement pour vérification) -->
+            <div class="form-section" id="alarme-verification-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-clipboard-check"></i>
+                    Vérification technique
+                </h3>
+
+                <!-- État général -->
+                <div class="form-group">
+                    <label class="form-label">État général *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'etat-general')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'etat-general')">Non OK</div>
+                    </div>
+                    <textarea class="form-textarea" id="alarme-etat-general-comment" placeholder="Commentaire..." rows="2" style="margin-top: 0.5rem;"></textarea>
+                    <input type="hidden" id="alarme-etat-general" value="">
+                </div>
+
+                <!-- Détecteurs -->
+                <div class="form-group">
+                    <label class="form-label">Déclencheur(s) manuel(s) fonctionnel(s) *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'detecteurs')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'detecteurs')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-detecteurs" value="">
+                </div>
+
+                <!-- Sirènes et flashs -->
+                <div class="form-group">
+                    <label class="form-label">Sirènes et flashs *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'sirenes')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'sirenes')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-sirenes" value="">
+                </div>
+
+                <!-- Panneau de contrôle -->
+                <div class="form-group">
+                    <label class="form-label">Câblage en état *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'panneau')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'panneau')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-panneau" value="">
+                </div>
+
+                <!-- Alimentation -->
+                <div class="form-group">
+                    <label class="form-label">Alimentation secteur *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'alimentation')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'alimentation')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-alimentation" value="">
+                </div>
+
+                <!-- Batteries de secours -->
+                <div class="form-group">
+                    <label class="form-label">Batteries *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'batteries')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'batteries')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-batteries" value="">
+                </div>
+
+                <!-- Test complet -->
+                <div class="form-group">
+                    <label class="form-label">Test complet du système *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'test-complet')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'test-complet')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-test-complet" value="">
+                </div>
+
+                <!-- Signalisation -->
+                <div class="form-group">
+                    <label class="form-label">Équipement accessible *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'signalisation')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'signalisation')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-signalisation" value="">
+                </div>
+
+                <!-- Journalisation -->
+                <div class="form-group">
+                    <label class="form-label">Fixation correcte *</label>
+                    <div class="ok-nok-selector">
+                        <div class="ok-nok-option ok" onclick="selectAlarmeNok(this, 'journalisation')">OK</div>
+                        <div class="ok-nok-option nok" onclick="selectAlarmeNok(this, 'journalisation')">Non OK</div>
+                    </div>
+                    <input type="hidden" id="alarme-journalisation" value="">
+                </div>
+
+                <!-- Tests effectués -->
+                <div class="form-group">
+                    <label class="form-label">Tests effectués</label>
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="alarme-test-detecteurs">
+                            <label for="alarme-test-detecteurs">Test DM</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="alarme-test-sirenes">
+                            <label for="alarme-test-sirenes">Test sirènes</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="alarme-test-flashs">
+                            <label for="alarme-test-flashs">Test flashs</label>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="alarme-test-batteries">
+                            <label for="alarme-test-batteries">Test batteries</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3 class="form-section-title">
+                    <i class="fas fa-images"></i>
+                    Photos et observations
+                </h3>
+
+                <!-- Photos -->
+                <div class="form-group">
+                    <label class="form-label">Photos</label>
+                    <button type="button" class="btn btn-primary" onclick="addAlarmePhoto()" style="width: 100%;">
+                        <i class="fas fa-camera"></i> Ajouter des photos
+                    </button>
+                    <input type="file" id="alarme-photo-input" accept="image/*" multiple style="display: none;" onchange="handleAlarmePhotos(this.files)">
+                    <div id="alarme-photo-gallery" class="photo-gallery"></div>
+                </div>
+
+                <!-- Observations -->
+                <div class="form-group">
+                    <label class="form-label">Observations</label>
+                    <textarea class="form-textarea" id="alarme-observations" 
+                              placeholder="Observations..." rows="3"></textarea>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
+                <button class="btn" onclick="closeAlarmeModal()" style="flex: 1; background: var(--border-color);">
+                    Annuler
+                </button>
+                <button class="btn btn-success" onclick="addAlarmeToList()" style="flex: 1;">
+                    <i class="fas fa-plus"></i> Ajouter
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Ajout Intervention -->
+    <div class="modal" id="add-intervention-modal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 1.2rem; color: var(--primary); font-size: 1.3rem;">
+                <i class="fas fa-calendar-plus"></i> Ajouter une intervention
+            </h2>
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label class="form-label">Client *</label>
+                    <select class="form-select" id="intervention-client" required>
+                        <option value="">Sélectionner un client</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Titre *</label>
+                    <input type="text" class="form-input" id="intervention-title" placeholder="Vérification annuelle" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Type d'intervention *</label>
+                    <select class="form-select" id="intervention-type" required onchange="updateInterventionColor()">
+                        <option value="">Sélectionner un type</option>
+                        <option value="verification">Vérification</option>
+                        <option value="installation">Installation</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Date début *</label>
+                    <input type="datetime-local" class="form-input" id="intervention-start" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Date fin *</label>
+                    <input type="datetime-local" class="form-input" id="intervention-end" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Technicien</label>
+                    <input type="text" class="form-input" id="intervention-technician" placeholder="Technicien assigné">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-textarea" id="intervention-description" 
+                              placeholder="Description de l'intervention..." rows="3"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <input type="hidden" id="intervention-color" value="var(--verification-color)">
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
+                <button class="btn" onclick="closeInterventionModal()" style="flex: 1; background: var(--border-color);">
+                    Annuler
+                </button>
+                <button class="btn btn-success" onclick="saveIntervention()" style="flex: 1;">
+                    <i class="fas fa-save"></i> Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Preview -->
+    <div class="modal" id="preview-modal">
+        <div class="modal-content">
+            <div class="preview-container">
+                <div class="preview-header">
+                    <h2 style="color: white; margin: 0;">
+                        <i class="fas fa-eye"></i> Prévisualisation du rapport APSAD
+                    </h2>
+                    <div style="margin-top: 0.5rem;">
+                        <button class="btn btn-sm" onclick="printPreview()">
+                            <i class="fas fa-print"></i> Imprimer
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="closePreview()" style="margin-left: 0.5rem;">
+                            <i class="fas fa-times"></i> Fermer
+                        </button>
+                    </div>
+                </div>
+                <div class="preview-content">
+                    <div class="preview-paper" id="preview-content">
+                        <!-- Le contenu du preview sera généré dynamiquement -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Facture -->
+    <div class="modal" id="facture-modal">
+        <div class="modal-content">
+            <div class="preview-container">
+                <div class="preview-header">
+                    <h2 style="color: white; margin: 0;">
+                        <i class="fas fa-file-invoice-dollar"></i> Prévisualisation de la facture
+                    </h2>
+                    <div style="margin-top: 0.5rem;">
+                        <button class="btn btn-sm btn-success" onclick="generateFacturePDF()">
+                            <i class="fas fa-file-pdf"></i> Enregistrer en PDF
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="closeFacture()" style="margin-left: 0.5rem;">
+                            <i class="fas fa-times"></i> Fermer
+                        </button>
+                    </div>
+                </div>
+                <div class="preview-content">
+                    <div class="preview-paper facture-paper" id="facture-content">
+                        <!-- Le contenu de la facture sera généré dynamiquement -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Succès -->
+    <div class="modal" id="success-modal">
+        <div class="modal-content">
+            <h2 style="color: var(--success); margin-bottom: 1rem; text-align: center; font-size: 1.3rem;">
+                <i class="fas fa-check-circle"></i> Succès !
+            </h2>
+            <p id="modal-message" style="text-align: center; margin-bottom: 1.5rem; line-height: 1.5;"></p>
+            <button class="btn btn-primary btn-block" onclick="closeSuccessModal()">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal Erreur -->
+    <div class="modal" id="error-modal">
+        <div class="modal-content">
+            <h2 style="color: var(--danger); margin-bottom: 1rem; text-align: center; font-size: 1.3rem;">
+                <i class="fas fa-exclamation-triangle"></i> Erreur !
+            </h2>
+            <p id="error-message" style="text-align: center; margin-bottom: 1.5rem; line-height: 1.5;"></p>
+            <button class="btn btn-danger btn-block" onclick="closeErrorModal()">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <!-- Dans la partie head de votre index.html -->
+    <script>
+    // Vérifier et enregistrer le service worker
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/service-worker.js')
+                .then(registration => {
+                    console.log('ServiceWorker enregistré avec succès:', registration.scope);
+                    
+                    // Vérifier les mises à jour
+                    registration.addEventListener('updatefound', () => {
+                        const newWorker = registration.installing;
+                        console.log('Nouvelle version du Service Worker détectée');
+                        
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed') {
+                                if (navigator.serviceWorker.controller) {
+                                    // Nouvelle version disponible
+                                    showUpdateNotification();
+                                }
+                            }
+                        });
+                    });
+                })
+                .catch(error => {
+                    console.error('Erreur d\'enregistrement du ServiceWorker:', error);
+                });
+        });
+        
+        // Écouter les messages du service worker
+        navigator.serviceWorker.addEventListener('message', event => {
+            switch(event.data.type) {
+                case 'SW_ACTIVATED':
+                    console.log('Service Worker activé:', event.data.message);
+                    break;
+                    
+                case 'NETWORK_STATUS':
+                    updateNetworkStatus(event.data.online);
+                    break;
+                    
+                case 'SYNC_COMPLETED':
+                    showSyncNotification(event.data);
+                    break;
+            }
+        });
+        
+        // Gérer le contrôleur
+        navigator.serviceWorker.ready.then(registration => {
+            console.log('Service Worker prêt');
+        });
+    }
+
+    // Fonction pour montrer la notification de mise à jour
+    function showUpdateNotification() {
+        if (confirm('Une nouvelle version est disponible. Recharger maintenant?')) {
+            // Envoyer un message au service worker pour skip waiting
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'SKIP_WAITING'
+                });
+            }
+            // Recharger la page
+            window.location.reload();
+        }
+    }
+
+    // Fonction pour mettre à jour le statut réseau
+    function updateNetworkStatus(isOnline) {
+        const statusElement = document.getElementById('network-status');
+        if (statusElement) {
+            statusElement.textContent = isOnline ? 'En ligne' : 'Hors ligne';
+            statusElement.className = isOnline ? 'online' : 'offline';
+        }
+    }
+    </script>
+
+    <script src="app.js"></script>
+    <script src="pdf-generator.js"></script>
+    <script src="firecheck-manager.js"></script>
+<script>
+// ==================== VÉRIFICATION SERVICE WORKER ====================
+console.log('FireCheck Pro - Vérification PWA...');
+
+// 1. Vérifier si le Service Worker est enregistré
+if ('serviceWorker' in navigator) {
+  // Désenregistrer tous les anciens SW
+  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+    for(let registration of registrations) {
+      registration.unregister();
+      console.log('Ancien SW désenregistré:', registration.scope);
+    }
+  }).then(function() {
+    // Enregistrer le nouveau
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('service-worker.js')
+        .then(function(registration) {
+          console.log('✅ Service Worker enregistré:', registration.scope);
+          
+          // Vérifier si le SW contrôle déjà la page
+          if (navigator.serviceWorker.controller) {
+            console.log('🎮 Service Worker contrôle la page');
+            updateOfflineStatus();
+          } else {
+            console.log('⚠️ SW installé mais ne contrôle pas encore');
+            // Recharger pour prendre le contrôle
+            window.location.reload();
+          }
+        })
+        .catch(function(error) {
+          console.error('❌ Erreur SW:', error);
+        });
+    });
+  });
+} else {
+  console.log('❌ Service Worker non supporté');
+}
+
+// 2. Fonction pour vérifier le statut hors ligne
+function updateOfflineStatus() {
+  // Vérifier le cache
+  if ('caches' in window) {
+    caches.open('firecheck-v1').then(function(cache) {
+      return cache.keys();
+    }).then(function(keys) {
+      console.log('📦 Fichiers en cache:', keys.length);
+      
+      // Mettre à jour le bouton serveur
+      const serverBtn = document.getElementById('server-status');
+      if (serverBtn) {
+        serverBtn.innerHTML = '<i class="fas fa-server"></i>' + 
+          '<span class="mobile-hide">Cache: ' + keys.length + ' fichiers</span>';
+        
+        if (keys.length > 0) {
+          serverBtn.style.background = '#2e7d32'; // Vert
+          serverBtn.title = 'Prêt pour le mode hors ligne';
+        }
+      }
+    });
+  }
+}
+
+// 3. Détecter les changements de connexion
+window.addEventListener('online', function() {
+  console.log('🌐 En ligne');
+  const serverBtn = document.getElementById('server-status');
+  if (serverBtn) {
+    serverBtn.style.background = '';
+    serverBtn.innerHTML = '<i class="fas fa-server"></i><span class="mobile-hide">Connecté</span>';
+  }
+});
+
+window.addEventListener('offline', function() {
+  console.log('📴 Hors ligne');
+  const serverBtn = document.getElementById('server-status');
+  if (serverBtn) {
+    serverBtn.style.background = '#c62828'; // Rouge
+    serverBtn.innerHTML = '<i class="fas fa-server"></i><span class="mobile-hide">Hors ligne</span>';
+    
+    // Montrer une notification
+    showOfflineNotification();
+  }
+});
+
+// 4. Notification hors ligne
+function showOfflineNotification() {
+  const notification = document.createElement('div');
+  notification.innerHTML = `
+    <div style="
+      position: fixed;
+      top: 120px;
+      right: 20px;
+      background: #c62828;
+      color: white;
+      padding: 10px 15px;
+      border-radius: 5px;
+      z-index: 1000;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    ">
+      <i class="fas fa-wifi-slash"></i> Mode hors ligne activé
+    </div>
+  `;
+  document.body.appendChild(notification);
+  
+  setTimeout(function() {
+    notification.remove();
+  }, 3000);
+}
+
+// 5. Forcer la mise à jour du SW au démarrage
+setTimeout(function() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready.then(function(registration) {
+      registration.update();
+    });
+  }
+}, 1000);
+</script>
+<script>
+// ==================== FIX iPhone SAFARI - ÉCRAN NOIR ====================
+(function() {
+  console.log('🔧 Initialisation iPhone Safari Fix');
+  
+  // Détecter iPhone Safari
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  
+  if (isIOS && isSafari) {
+    console.log('📱 iPhone Safari détecté - Activation des correctifs');
+    
+    // 1. FORCER le rechargement si page blanche/noire
+    window.addEventListener('pageshow', function(event) {
+      console.log('📄 Page show - Persisted:', event.persisted);
+      
+      if (event.persisted) {
+        // La page vient du cache navigateur
+        console.log('🔄 Page restaurée depuis cache - Vérification UI');
+        
+        // Vérifier si le DOM est chargé
+        setTimeout(() => {
+          const body = document.body;
+          if (!body || body.children.length === 0) {
+            console.log('🚨 Écran noir détecté - Rechargement');
+            window.location.reload();
+          } else if (body.innerHTML.trim().length < 100) {
+            console.log('🚨 Contenu manquant - Rechargement');
+            window.location.reload();
+          }
+        }, 100);
+      }
+    });
+    
+    // 2. Prévenir les problèmes de cache
+    if ('serviceWorker' in navigator) {
+      // Désenregistrer tous les SW existants
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        registrations.forEach(registration => {
+          console.log('🗑️ Désenregistrement ancien SW:', registration.scope);
+          registration.unregister();
+        });
+      }).then(() => {
+        // Enregistrer le nouveau SW avec timeout
+        setTimeout(() => {
+          navigator.serviceWorker.register('service-worker.js')
+            .then(registration => {
+              console.log('✅ SW iPhone enregistré');
+              
+              // FORCER l'activation
+              if (registration.waiting) {
+                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+              }
+              
+              // Vérifier l'état toutes les secondes
+              setInterval(() => {
+                if (registration.active) {
+                  console.log('✅ SW actif');
+                } else {
+                  console.log('⚠️ SW inactif - Rechargement');
+                  window.location.reload();
+                }
+              }, 1000);
+            })
+            .catch(error => {
+              console.error('❌ Erreur SW iPhone:', error);
+              // Fallback: recharger sans SW
+              if (error.message.includes('redirect')) {
+                window.location.href = window.location.href.split('#')[0];
+              }
+            });
+        }, 1000);
+      });
+    }
+    
+    // 3. Vérifier l'état de l'application toutes les 5 secondes
+    setInterval(() => {
+      // Vérifier si le contenu est affiché
+      const mainContent = document.querySelector('.container, .page, .card');
+      if (!mainContent && window.location.pathname.includes('index.html')) {
+        console.log('🚨 Contenu manquant détecté - Rechargement auto');
+        window.location.reload();
+      }
+    }, 5000);
+    
+    // 4. Gestion du cache manuel pour Safari
+    const safariCache = {
+      save: function(key, data) {
+        try {
+          localStorage.setItem(`safari_${key}`, JSON.stringify(data));
+          sessionStorage.setItem(`safari_${key}`, JSON.stringify(data));
+          console.log('💾 Données sauvegardées pour Safari:', key);
+        } catch (e) {
+          console.error('❌ Erreur sauvegarde Safari:', e);
+        }
+      },
+      
+      load: function(key) {
+        try {
+          const data = localStorage.getItem(`safari_${key}`) || 
+                       sessionStorage.getItem(`safari_${key}`);
+          return data ? JSON.parse(data) : null;
+        } catch (e) {
+          console.error('❌ Erreur chargement Safari:', e);
+          return null;
+        }
+      },
+      
+      clear: function() {
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('safari_')) {
+            localStorage.removeItem(key);
+          }
+        });
+      }
+    };
+    
+    // Exposer globalement
+    window.safariCache = safariCache;
+    
+    // 5. Sauvegarde auto des données importantes
+    const importantSelectors = [
+      '#client-name', '#technician-name', 
+      '#extincteur-id', '#ria-id', '#baes-id', '#alarme-id'
+    ];
+    
+    setInterval(() => {
+      importantSelectors.forEach(selector => {
+        const element = document.querySelector(selector);
+        if (element && element.value) {
+          safariCache.save(selector, element.value);
+        }
+      });
+      
+      // Sauvegarder l'état de l'application
+      safariCache.save('last_active', {
+        timestamp: Date.now(),
+        url: window.location.href,
+        path: window.location.pathname
+      });
+    }, 30000); // Toutes les 30 secondes
+    
+    // 6. Restaurer les données au chargement
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        importantSelectors.forEach(selector => {
+          const savedValue = safariCache.load(selector);
+          const element = document.querySelector(selector);
+          if (savedValue && element && !element.value) {
+            element.value = savedValue;
+            console.log('🔄 Donnée restaurée:', selector);
+          }
+        });
+      }, 500);
+    });
+    
+    // 7. Détecter et corriger l'écran noir
+    let blackScreenCheckCount = 0;
+    
+    const checkForBlackScreen = () => {
+      const bodyStyle = window.getComputedStyle(document.body);
+      const bodyColor = bodyStyle.backgroundColor;
+      const bodyChildren = document.body.children.length;
+      
+      // Vérifier si écran noir/blanc
+      if ((bodyColor === 'rgb(0, 0, 0)' || bodyColor === 'rgb(255, 255, 255)') && 
+          bodyChildren === 0) {
+        blackScreenCheckCount++;
+        
+        if (blackScreenCheckCount >= 3) {
+          console.log('🚨 Écran noir confirmé - Redirection');
+          window.location.href = '/index.html?reload=' + Date.now();
+        }
+      } else {
+        blackScreenCheckCount = 0;
+      }
+    };
+    
+    // Vérifier toutes les secondes pendant 10 secondes
+    const blackScreenInterval = setInterval(checkForBlackScreen, 1000);
+    setTimeout(() => clearInterval(blackScreenInterval), 10000);
+    
+    // 8. Log supplémentaire pour débogage
+    console.log('🔍 État initial iPhone:');
+    console.log('- Body enfants:', document.body.children.length);
+    console.log('- Body HTML:', document.body.innerHTML.length, 'caractères');
+    console.log('- URL:', window.location.href);
+    
+  } else {
+    console.log('🖥️ Pas iPhone Safari - Correctifs désactivés');
+  }
+  
+  // 9. Fonction de récupération manuelle
+  window.fixBlackScreen = function() {
+    console.log('🛠️ Correction manuelle écran noir');
+    
+    // Essayer plusieurs méthodes
+    try {
+      // Méthode 1: Rechargement simple
+      window.location.reload();
+    } catch (e) {
+      // Méthode 2: Redirection
+      window.location.href = window.location.pathname;
+    }
+  };
+  
+  // 10. Ajouter un bouton de secours (visible seulement si problème)
+  setTimeout(() => {
+    const hasContent = document.body && 
+                      document.body.innerHTML && 
+                      document.body.innerHTML.length > 500;
+    
+    if (!hasContent) {
+      console.log('⚠️ Contenu insuffisant - Ajout bouton secours');
+      
+      const rescueButton = document.createElement('button');
+      rescueButton.innerHTML = '🔄 Réparer l\'application';
+      rescueButton.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 9999;
+        background: #c62828;
+        color: white;
+        padding: 15px 30px;
+        border: none;
+        border-radius: 10px;
+        font-size: 16px;
+        cursor: pointer;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      `;
+      rescueButton.onclick = window.fixBlackScreen;
+      
+      document.body.appendChild(rescueButton);
+    }
+  }, 3000);
+})();
+</script>
+    <!-- ... tous vos modals et scripts existants ... -->
+
+    <!-- ==================== GESTION DE SESSION ==================== -->
+    <script>
+        // Quand l'app est chargée
+        document.addEventListener('DOMContentLoaded', function() {
+            // Vérifier si auth.js est chargé
+            if (typeof window.auth !== 'undefined') {
+                const user = window.auth.checkAuth();
+                
+                // Exemple : personnaliser selon le rôle
+                if (user && user.role === 'admin') {
+                    // Afficher des fonctionnalités admin
+                    console.log('Mode administrateur activé');
+                    
+                    // Exemple: ajouter un lien admin dans le header
+                    const adminLink = document.createElement('button');
+                    adminLink.innerHTML = '👑 Admin';
+                    adminLink.onclick = () => { /* fonction admin */ };
+                    document.querySelector('.header-controls')?.prepend(adminLink);
+                }
+                
+                // Vérifier l'expiration de session périodiquement
+                setInterval(() => {
+                    if (!window.auth.checkAuth()) {
+                        alert('Session expirée. Veuillez vous reconnecter.');
+                        window.auth.logout();
+                    }
+                }, 60000); // Vérifier toutes les minutes
+            }
+        });
+    </script>
+</body>
+</html>
