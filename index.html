@@ -4181,6 +4181,28 @@ setTimeout(function() {
     }
   }, 3000);
 })();
+    <!-- ========== REDIRECTION SÉCURITÉ ========== -->
+    <script>
+        // Vérifier si l'utilisateur est connecté
+        (function() {
+            // Charger auth.js d'abord
+            const script = document.createElement('script');
+            script.src = 'auth.js';
+            script.onload = function() {
+                // Vérifier l'authentification
+                const user = window.auth ? window.auth.checkAuth() : null;
+                
+                if (!user) {
+                    // Rediriger vers auth.html
+                    console.log('🚫 Non connecté - Redirection vers auth.html');
+                    window.location.href = 'auth.html';
+                } else {
+                    console.log('✅ Utilisateur connecté :', user.fullName);
+                }
+            };
+            document.head.appendChild(script);
+        })();
+    </script>
 </script>
     <!-- ... tous vos modals et scripts existants ... -->
 
