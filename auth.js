@@ -6,16 +6,16 @@
 // ⚠️ Pour un usage réel, remplacez par vos propres utilisateurs
 const USERS = [
     {
-        username: "demo",
-        password: "demo123",      // Mot de passe démo
-        role: "user",
-        fullName: "Utilisateur Démo"
+        username: "",
+        password: "",      // Mot de passe démo
+        role: "",
+        fullName: ""
     },
     {
         username: "admin",
         password: "admin123",     // Mot de passe démo admin
         role: "admin",
-        fullName: "Administrateur"
+        fullName: "Admin"
     }
 ];
 
