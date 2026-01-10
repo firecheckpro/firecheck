@@ -4905,3 +4905,162 @@ function exportFacturesCSV() {
 }
 
 console.log('FireCheck Pro - Application chargée avec succès');
+
+// ==================== MODE PLEIN ÉCRAN POUR iPhone ====================
+(function() {
+    console.log('📱 Initialisation mode plein écran iPhone/Chrome');
+    
+    // Détecter iPhone
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    
+    // Détecter si l'app est en mode standalone (installée sur l'écran d'accueil)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                        window.navigator.standalone || 
+                        document.referrer.includes('android-app://');
+    
+    console.log('📱 Mode standalone détecté:', isStandalone);
+    
+    if (isIOS || isStandalone) {
+        // Mode plein écran activé
+        console.log('🚀 Mode plein écran activé pour iPhone');
+        
+        // Ajuster le CSS pour le mode plein écran
+        const style = document.createElement('style');
+        style.textContent = `
+            /* Ajustements pour le mode plein écran */
+            body {
+                height: 100vh;
+                height: -webkit-fill-available;
+                overflow: hidden;
+            }
+            
+            .container {
+                height: 100vh;
+                height: -webkit-fill-available;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            /* Ajuster la hauteur pour iPhone avec encoche */
+            @supports (padding: env(safe-area-inset-top)) {
+                body {
+                    padding-top: env(safe-area-inset-top);
+                    padding-bottom: env(safe-area-inset-bottom);
+                    padding-left: env(safe-area-inset-left);
+                    padding-right: env(safe-area-inset-right);
+                }
+                
+                .header {
+                    padding-top: env(safe-area-inset-top);
+                    min-height: calc(60px + env(safe-area-inset-top));
+                }
+                
+                .nav-tabs {
+                    top: calc(60px + env(safe-area-inset-top));
+                }
+                
+                .page {
+                    min-height: calc(100vh - 120px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+                }
+            }
+            
+            /* Ajustements pour Chrome sur iOS en mode plein écran */
+            @media all and (display-mode: standalone) {
+                body {
+                    -webkit-overflow-scrolling: touch;
+                }
+                
+                .container {
+                    overflow-y: auto;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        // Gérer les événements de touche pour éviter le zoom
+        document.addEventListener('touchstart', function(event) {
+            if (event.touches.length > 1) {
+                event.preventDefault();
+            }
+        }, { passive: false });
+        
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', function(event) {
+            const now = Date.now();
+            if (now - lastTouchEnd <= 300) {
+                event.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, { passive: false });
+        
+        // Éviter le zoom double-tap
+        document.addEventListener('gesturestart', function(event) {
+            event.preventDefault();
+        });
+        
+        // Ajuster dynamiquement la hauteur sur iOS
+        function setAppHeight() {
+            const vh = window.innerHeight * 0.01;
+            document.documentElement.style.setProperty('--vh', `${vh}px`);
+        }
+        
+        // Initialiser la hauteur
+        setAppHeight();
+        
+        // Mettre à jour la hauteur lors des rotations
+        window.addEventListener('resize', setAppHeight);
+        window.addEventListener('orientationchange', setAppHeight);
+        
+        // Gestion du clavier sur iOS
+        const inputs = document.querySelectorAll('input, textarea, select');
+        inputs.forEach(input => {
+            input.addEventListener('focus', function() {
+                // Faire défiler vers l'élément
+                setTimeout(() => {
+                    this.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+            });
+        });
+    }
+    
+    // Fonction pour forcer le mode plein écran
+    window.requestFullscreenMode = function() {
+        if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen();
+        } else if (document.documentElement.webkitRequestFullscreen) { // Safari
+            document.documentElement.webkitRequestFullscreen();
+        } else if (document.documentElement.msRequestFullscreen) { // IE11
+            document.documentElement.msRequestFullscreen();
+        }
+    };
+    
+    // Fonction pour sortir du mode plein écran
+    window.exitFullscreenMode = function() {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) { // Safari
+            document.webkitExitFullscreen();
+        } else if (document.msExitFullscreen) { // IE11
+            document.msExitFullscreen();
+        }
+    };
+    
+    // Ajouter un bouton de contrôle plein écran dans le header (optionnel)
+    if (isIOS) {
+        document.addEventListener('DOMContentLoaded', function() {
+            const fullscreenBtn = document.createElement('button');
+            fullscreenBtn.className = 'btn btn-sm';
+            fullscreenBtn.innerHTML = '<i class="fas fa-expand"></i>';
+            fullscreenBtn.title = 'Mode plein écran';
+            fullscreenBtn.onclick = function() {
+                window.requestFullscreenMode();
+            };
+            
+            // Ajouter au header si souhaité
+            // const headerControls = document.querySelector('.header-controls');
+            // if (headerControls) {
+            //     headerControls.appendChild(fullscreenBtn);
+            // }
+        });
+    }
+})();

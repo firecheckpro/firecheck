@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>FireCheck Pro - Vérification Incendie</title>
 
+<!-- Configuration PWA pour iPhone/Chrome -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FireCheck Pro">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a365d">
+<meta name="msapplication-TileColor" content="#1a365d">
+<meta name="msapplication-starturl" content="/index.html">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-orientations" content="portrait">
+
+<!-- iOS splash screens -->
+<link rel="apple-touch-startup-image" href="icons/splash-640x1136.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash-750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash-1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
     <!-- PWA Configuration -->
     <link rel="manifest" href="manifest.json">
 
@@ -117,6 +134,15 @@
             display: flex;
             gap: 8px;
             align-items: center;
+            flex-wrap: nowrap;
+        }
+
+        /* Style pour l'indicateur utilisateur */
+        .user-indicator {
+            color: white;
+            font-size: 0.9rem;
+            margin-right: 10px;
+            white-space: nowrap;
         }
 
         /* Navigation */
@@ -1610,6 +1636,10 @@
                 gap: 0.5rem;
             }
             
+            .user-indicator {
+                display: none;
+            }
+            
             .status-indicator {
                 font-size: 0.7rem;
                 padding: 0.2rem 0.4rem;
@@ -1816,6 +1846,10 @@
                 padding: 0.5rem 0.7rem;
                 min-height: 36px;
                 font-size: 0.8rem;
+            }
+            
+            .header-controls .mobile-hide {
+                display: none;
             }
             
             .modal-content {
@@ -2030,7 +2064,8 @@
     }
 }
     </style>
-<!-- ==================== AUTHENTIFICATION ==================== -->
+
+    <!-- ==================== AUTHENTIFICATION ==================== -->
     <script>
         // Vérifier l'authentification avant tout
         (function() {
@@ -2049,29 +2084,26 @@
                 
                 // Afficher l'interface utilisateur
                 document.addEventListener('DOMContentLoaded', function() {
-                    // Ajouter en-tête avec infos utilisateur
-                    const header = document.createElement('div');
-                    header.style.cssText = `
-                        background: #f5f5f5;
-                        padding: 10px 20px;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        border-bottom: 1px solid #ddd;
-                    `;
+                    // Ajouter le bouton de déconnexion dans le header
+                    const logoutBtn = document.createElement('button');
+                    logoutBtn.className = 'btn btn-sm btn-danger';
+                    logoutBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> <span class="mobile-hide">Déconnexion</span>';
+                    logoutBtn.onclick = function() {
+                        window.auth.logout();
+                    };
+                    logoutBtn.title = 'Se déconnecter';
                     
-                    header.innerHTML = `
-                        <div>
-                            👋 Bonjour, <strong>${user.fullName}</strong>
-                            ${user.role === 'admin' ? ' 👑' : ''}
-                        </div>
-                        <button onclick="window.auth.logout()" 
-                                style="padding: 5px 15px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                            Déconnexion
-                        </button>
-                    `;
+                    // Ajouter aussi l'indicateur d'utilisateur
+                    const userIndicator = document.createElement('span');
+                    userIndicator.className = 'user-indicator mobile-hide';
+                    userIndicator.innerHTML = `👋 ${user.fullName}`;
                     
-                    document.body.prepend(header);
+                    // Insérer dans le header
+                    const headerControls = document.querySelector('.header-controls');
+                    if (headerControls) {
+                        headerControls.prepend(userIndicator);
+                        headerControls.prepend(logoutBtn);
+                    }
                 });
             };
             document.head.appendChild(script);
@@ -2084,16 +2116,18 @@
         <header class="header">
             <h1><i class="fas fa-fire-extinguisher"></i>FireCheck</h1>
 
-<!-- Dans la section header -->
-<div class="header-controls">
-    <button class="btn btn-sm" onclick="exportData()" title="Exporter données">
-        <i class="fas fa-download"></i>
-    </button>
-    <button id="server-status" class="btn btn-sm" title="Statut serveur">
-        <i class="fas fa-server"></i>
-        <span class="mobile-hide">Serveur</span>
-    </button>
-</div>
+            <!-- Dans la section header -->
+            <div class="header-controls">
+                <!-- Le bouton de déconnexion sera ajouté ici par le script -->
+                <button class="btn btn-sm" onclick="exportData()" title="Exporter données">
+                    <i class="fas fa-download"></i>
+                    <span class="mobile-hide">Exporter</span>
+                </button>
+                <button id="server-status" class="btn btn-sm" title="Statut serveur">
+                    <i class="fas fa-server"></i>
+                    <span class="mobile-hide">Serveur</span>
+                </button>
+            </div>
         </header>
 
         <!-- Navigation -->
@@ -3773,7 +3807,6 @@
                 .catch(error => {
                     console.error('Erreur d\'enregistrement du ServiceWorker:', error);
                 });
-        });
         
         // Écouter les messages du service worker
         navigator.serviceWorker.addEventListener('message', event => {
@@ -4181,30 +4214,28 @@ setTimeout(function() {
     }
   }, 3000);
 })();
+
     <!-- ========== REDIRECTION SÉCURITÉ ========== -->
-    <script>
-        // Vérifier si l'utilisateur est connecté
-        (function() {
-            // Charger auth.js d'abord
-            const script = document.createElement('script');
-            script.src = 'auth.js';
-            script.onload = function() {
-                // Vérifier l'authentification
-                const user = window.auth ? window.auth.checkAuth() : null;
-                
-                if (!user) {
-                    // Rediriger vers auth.html
-                    console.log('🚫 Non connecté - Redirection vers auth.html');
-                    window.location.href = 'auth.html';
-                } else {
-                    console.log('✅ Utilisateur connecté :', user.fullName);
-                }
-            };
-            document.head.appendChild(script);
-        })();
-    </script>
+    // Vérifier si l'utilisateur est connecté
+    (function() {
+        // Charger auth.js d'abord
+        const script = document.createElement('script');
+        script.src = 'auth.js';
+        script.onload = function() {
+            // Vérifier l'authentification
+            const user = window.auth ? window.auth.checkAuth() : null;
+            
+            if (!user) {
+                // Rediriger vers auth.html
+                console.log('🚫 Non connecté - Redirection vers auth.html');
+                window.location.href = 'auth.html';
+            } else {
+                console.log('✅ Utilisateur connecté :', user.fullName);
+            }
+        };
+        document.head.appendChild(script);
+    })();
 </script>
-    <!-- ... tous vos modals et scripts existants ... -->
 
     <!-- ==================== GESTION DE SESSION ==================== -->
     <script>
@@ -4221,7 +4252,7 @@ setTimeout(function() {
                     
                     // Exemple: ajouter un lien admin dans le header
                     const adminLink = document.createElement('button');
-                    adminLink.innerHTML = '👑 Admin';
+                    adminLink.innerHTML = '';
                     adminLink.onclick = () => { /* fonction admin */ };
                     document.querySelector('.header-controls')?.prepend(adminLink);
                 }
