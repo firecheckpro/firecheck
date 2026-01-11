@@ -47,6 +47,8 @@
     <!-- Signature Pad -->
     <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.5/dist/signature_pad.umd.min.js"></script>
     
+<script src="check-auth.js"></script>
+
     <style>
         /* Variables et Reset */
         * {
@@ -3995,7 +3997,42 @@
             </button>
         </div>
     </div>
-
+    <!-- Ajoutez ce script de vérification d'authentification -->
+    <script>
+        // Vérifier immédiatement si l'utilisateur est connecté
+        (function() {
+            console.log('🔐 Vérification de l\'authentification...');
+            
+            // Vérifier la session dans localStorage
+            const sessionData = localStorage.getItem('user_session');
+            
+            if (!sessionData) {
+                console.log('❌ Aucune session trouvée - Redirection vers auth.html');
+                // Rediriger IMMÉDIATEMENT vers la page de connexion
+                window.location.href = 'auth.html';
+                return;
+            }
+            
+            try {
+                const session = JSON.parse(sessionData);
+                // Vérifier l'expiration de la session
+                if (Date.now() > session.expiresAt) {
+                    console.log('⏰ Session expirée - Redirection vers auth.html');
+                    localStorage.removeItem('user_session');
+                    localStorage.removeItem('remember_me');
+                    window.location.href = 'auth.html';
+                    return;
+                }
+                
+                console.log('✅ Session valide - Chargement de l\'application');
+            } catch (error) {
+                console.error('❌ Erreur de session - Redirection vers auth.html');
+                localStorage.removeItem('user_session');
+                localStorage.removeItem('remember_me');
+                window.location.href = 'auth.html';
+            }
+        })();
+    </script>
 <script>
     // ==================== GESTION GLOBALE DE L'APPLICATION ====================
     document.addEventListener('DOMContentLoaded', function() {

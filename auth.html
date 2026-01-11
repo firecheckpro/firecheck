@@ -169,13 +169,17 @@
             <i class="fas fa-sign-in-alt"></i>
             Se connecter
         </button>
-
+        
+        <div id="sessionInfo" style="display: none;"></div>
     </div>
 
     <script src="auth.js"></script>
+    
     <script>
         // Focus sur le premier champ
-        document.getElementById('username').focus();
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('username').focus();
+        });
         
         // Entrée pour valider
         document.getElementById('password').addEventListener('keypress', function(e) {
@@ -197,7 +201,6 @@
             
             // Utiliser la fonction d'auth.js
             if (typeof auth !== 'undefined' && auth.login) {
-                // Version avec auth.js
                 auth.login();
             } else {
                 // Fallback simple
@@ -224,14 +227,7 @@
             errorDiv.style.gap = '10px';
         }
         
-        // Vérifier si déjà connecté
-        window.addEventListener('load', function() {
-            const session = localStorage.getItem('user_session');
-            if (session) {
-                // Rediriger vers l'app
-                window.location.href = 'index.html';
-            }
-        });
+        // PAS de redirection automatique ici - laissé à auth.js
     </script>
 </body>
 </html>

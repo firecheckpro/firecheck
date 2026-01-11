@@ -1,26 +1,29 @@
 // ============================================
-// AUTH.JS - Version SÉCURISÉE pour GitHub
+// AUTH.JS - Version corrigée
+// Désactive la redirection automatique vers index.html
 // ============================================
 
 // 🔐 UTILISATEURS DE DÉMONSTRATION
-// ⚠️ Pour un usage réel, remplacez par vos propres utilisateurs
 const USERS = [
     {
-        username: "",
-        password: "",      // Mot de passe démo
-        role: "",
-        fullName: ""
+        username: "demo",
+        password: "demo123",
+        role: "user",
+        fullName: "Utilisateur Démo"
     },
     {
         username: "admin",
-        password: "admin123",     // Mot de passe démo admin
+        password: "admin123",
         role: "admin",
-        fullName: "Admin"
+        fullName: "Administrateur"
+    },
+    {
+        username: "tech",
+        password: "tech123",
+        role: "technician",
+        fullName: "Technicien"
     }
 ];
-
-// ⚙️ PARAMÈTRES DE SESSION
-const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 heures
 
 // ============================================
 // FONCTIONS D'AUTHENTIFICATION
@@ -30,6 +33,8 @@ const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 heures
  * Fonction de connexion principale
  */
 function login(username, password, rememberMe = false) {
+    console.log('🔐 Tentative de connexion...');
+    
     // Si appelé depuis le HTML sans paramètres
     if (!username) {
         const usernameInput = document.getElementById('username');
@@ -66,7 +71,7 @@ function login(username, password, rememberMe = false) {
     // ✅ Connexion réussie !
     createSession(user, rememberMe);
     
-    // Redirection vers l'application
+    // Redirection vers l'application après succès
     setTimeout(() => {
         window.location.href = "index.html";
     }, 500);
@@ -83,7 +88,7 @@ function createSession(user, rememberMe) {
         fullName: user.fullName,
         role: user.role,
         loginTime: Date.now(),
-        expiresAt: Date.now() + SESSION_DURATION
+        expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 heures
     };
     
     // Stocker la session
@@ -96,7 +101,7 @@ function createSession(user, rememberMe) {
         localStorage.removeItem('remember_me');
     }
     
-    console.log(`✅ ${user.fullName} connecté(e)`);
+    console.log(`✅ ${user.fullName} connecté(e) avec succès`);
     return sessionData;
 }
 
@@ -115,6 +120,7 @@ function checkAuth() {
         
         // Vérifier l'expiration
         if (Date.now() > session.expiresAt) {
+            console.log('Session expirée');
             logout();
             return null;
         }
@@ -134,28 +140,32 @@ function logout() {
     localStorage.removeItem('user_session');
     localStorage.removeItem('remember_me');
     
-    // Rediriger vers la page de connexion
-    if (!window.location.pathname.includes('auth.html')) {
-        window.location.href = "auth.html";
-    }
+    console.log('👋 Déconnexion effectuée');
     
-    console.log('👋 Utilisateur déconnecté');
+    // Rediriger vers la page de connexion
+    window.location.href = "auth.html";
 }
 
 /**
  * Affiche un message d'erreur
  */
 function showError(message) {
+    console.error('Erreur auth:', message);
     const errorDiv = document.getElementById('errorMessage');
     if (errorDiv) {
-        errorDiv.textContent = message;
-        errorDiv.style.display = 'block';
+        errorDiv.innerHTML = `
+            <i class="fas fa-exclamation-circle"></i>
+            <span>${message}</span>
+        `;
+        errorDiv.style.display = 'flex';
+        errorDiv.style.alignItems = 'center';
+        errorDiv.style.gap = '10px';
         
         setTimeout(() => {
             errorDiv.style.display = 'none';
         }, 5000);
     } else {
-        alert(message); // Fallback
+        alert(message);
     }
 }
 
@@ -165,19 +175,53 @@ function showError(message) {
 function requireAuth() {
     const userSession = checkAuth();
     
-    // Si sur index.html et pas connecté
+    console.log('Vérification auth pour:', window.location.pathname);
+    console.log('Session:', userSession ? 'Connecté' : 'Non connecté');
+    
+    // Si sur index.html et pas connecté -> rediriger vers auth.html
     if (window.location.pathname.includes('index.html') && !userSession) {
+        console.log('Non authentifié, redirection vers auth.html');
         window.location.href = "auth.html";
         return null;
     }
     
-    // Si sur auth.html et déjà connecté
+    // Si sur auth.html et déjà connecté -> NE PAS rediriger automatiquement
+    // L'utilisateur peut choisir de rester ou de se reconnecter
     if (window.location.pathname.includes('auth.html') && userSession) {
-        window.location.href = "index.html";
+        console.log('Déjà connecté, reste sur auth.html');
+        // Afficher une info pour indiquer qu'une session existe
+        displaySessionInfo(userSession);
         return userSession;
     }
     
     return userSession;
+}
+
+/**
+ * Affiche les informations de session sur auth.html
+ */
+function displaySessionInfo(session) {
+    const infoDiv = document.getElementById('sessionInfo');
+    if (!infoDiv) return;
+    
+    infoDiv.innerHTML = `
+        <div style="background: #e8f5e9; padding: 10px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #4caf50;">
+            <p style="margin: 0; color: #2e7d32;">
+                <i class="fas fa-info-circle"></i>
+                Vous êtes déjà connecté en tant que <strong>${session.fullName}</strong>
+            </p>
+            <p style="margin: 5px 0 0 0; font-size: 14px; color: #555;">
+                Vous pouvez :
+                <button onclick="window.location.href='index.html'" style="margin-left: 10px; padding: 5px 10px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    <i class="fas fa-arrow-right"></i> Aller à l'application
+                </button>
+                <button onclick="logout()" style="margin-left: 5px; padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    <i class="fas fa-sign-out-alt"></i> Changer d'utilisateur
+                </button>
+            </p>
+        </div>
+    `;
+    infoDiv.style.display = 'block';
 }
 
 /**
@@ -188,43 +232,12 @@ function isAdmin() {
     return session && session.role === 'admin';
 }
 
-// ============================================
-// FONCTIONS UTILITAIRES
-// ============================================
-
 /**
- * Ajoute un utilisateur temporaire (pour configuration)
+ * Vérifie si l'utilisateur est technicien
  */
-function addTempUser(username, password, fullName, role = 'user') {
-    USERS.push({
-        username,
-        password,
-        fullName,
-        role
-    });
-    
-    console.log('👤 Utilisateur temporaire ajouté');
-    return true;
-}
-
-/**
- * Configuration rapide pour test
- */
-function quickSetup() {
-    console.log('⚙️ Configuration rapide...');
-    
-    // Ajouter un utilisateur admin pour test
-    addTempUser('test', 'test123', 'Utilisateur Test', 'admin');
-    
-    // Connecter automatiquement
-    createSession({
-        username: 'test',
-        fullName: 'Utilisateur Test',
-        role: 'admin'
-    }, false);
-    
-    alert('✅ Configuration terminée ! Redirection...');
-    window.location.href = "index.html";
+function isTechnician() {
+    const session = checkAuth();
+    return session && (session.role === 'technician' || session.role === 'admin');
 }
 
 // ============================================
@@ -233,18 +246,42 @@ function quickSetup() {
 
 // Au chargement de la page
 document.addEventListener('DOMContentLoaded', function() {
-    // Si on est sur auth.html, vérifier si déjà connecté
-    if (window.location.pathname.includes('auth.html')) {
-        const user = checkAuth();
-        if (user && localStorage.getItem('remember_me') === 'true') {
-            // Redirection auto si "se souvenir"
-            window.location.href = "index.html";
-        }
-    }
+    console.log('DOM chargé, vérification auth...');
     
-    // Si on est sur index.html, vérifier l'authentification
+    // Si on est sur index.html, vérifier l'authentification (redirigera si non connecté)
     if (window.location.pathname.includes('index.html')) {
         requireAuth();
+    }
+    
+    // Si on est sur auth.html
+    if (window.location.pathname.includes('auth.html')) {
+        console.log('Page de connexion détectée');
+        
+        // Vérifier si une session existe
+        const user = checkAuth();
+        const rememberMe = localStorage.getItem('remember_me') === 'true';
+        
+        console.log('Session existante:', user ? 'Oui' : 'Non');
+        console.log('Remember me:', rememberMe);
+        
+        // Si une session existe et que "remember me" est activé
+        if (user && rememberMe) {
+            console.log('Session existante avec remember me');
+            // Afficher les infos de session mais NE PAS rediriger automatiquement
+            displaySessionInfo(user);
+        } else if (user && !rememberMe) {
+            console.log('Session existante sans remember me');
+            // Afficher simplement les infos
+            displaySessionInfo(user);
+        } else {
+            console.log('Aucune session active');
+        }
+        
+        // Focus sur le champ utilisateur
+        const usernameInput = document.getElementById('username');
+        if (usernameInput) {
+            usernameInput.focus();
+        }
     }
 });
 
@@ -257,11 +294,11 @@ window.auth = {
     checkAuth,
     requireAuth,
     isAdmin,
-    addTempUser,
-    quickSetup,
+    isTechnician,
     USERS // Exposé pour debug
 };
 
 // Message de sécurité
-console.log('🔒 Auth.js chargé - Version démo');
-console.log('⚠️ Pour usage professionnel, remplacez les utilisateurs démo');
+console.log('🔒 Auth.js chargé - Version corrigée');
+console.log('📋 Utilisateurs disponibles:', USERS.map(u => u.username));
+console.log('ℹ️ La redirection automatique est désactivée');
