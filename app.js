@@ -1,12 +1,12 @@
 // FireCheck Pro - Application PWA de vérification sécurité incendie APSAD R4
-// Version corrigée - Problèmes de mise en page résolus
-
+// Version améliorée avec IndexedDB, gestion hors ligne et sauvegarde automatique
 // ==================== CONFIGURATION ====================
 const CONFIG = {
     localStorageKeys: {
         clients: 'firecheck_clients',
         interventions: 'firecheck_interventions',
-        factures: 'firecheck_factures'
+        factures: 'firecheck_factures',
+        calendarEvents: 'calendarEvents'
     },
     pdfSettings: {
         pageSize: 'a4',
@@ -29,7 +29,43 @@ const CONFIG = {
         mobile: 768,
         tablet: 1024
     },
-    familyFilters: ['all', 'extincteur', 'ria', 'baes', 'alarme']
+    familyFilters: ['all', 'extincteur', 'ria', 'baes', 'alarme'],
+    
+    // Nouvelles configurations
+    indexedDB: {
+        name: 'FireCheckProDB',
+        version: 3,
+        stores: {
+            clients: 'clients',
+            materials: 'materials',
+            interventions: 'interventions',
+            factures: 'factures',
+            settings: 'settings',
+            syncQueue: 'syncQueue'
+        }
+    },
+    
+    // Synchronisation
+    sync: {
+        enabled: true,
+        interval: 300000, // 5 minutes
+        retryAttempts: 3,
+        retryDelay: 5000
+    },
+    
+    // Sauvegarde automatique
+    autoSave: {
+        enabled: true,
+        interval: 60000, // 1 minute
+        onUnload: true
+    },
+    
+    // Gestion hors ligne
+    offline: {
+        cachePages: ['clients', 'materials', 'verification', 'signature'],
+        maxRetentionDays: 30,
+        syncOnReconnect: true
+    }
 };
 
 // ==================== ÉTAT DE L'APPLICATION ====================
@@ -49,42 +85,1196 @@ const AppState = {
     currentAlarmePhotos: [],
     materials: [],
     currentVerificationIndex: null,
-    currentVerificationPhotos: []
+    currentVerificationPhotos: [],
+    
+    // Nouvelles propriétés
+    db: null,
+    isOnline: navigator.onLine,
+    unsavedChanges: false,
+    lastSaveTime: null,
+    syncQueue: [],
+    offlineMode: false,
+    
+    // Variables pour le calendrier
+    calendarEvents: []
 };
 
 // ==================== PADS DE SIGNATURE ====================
 let clientSignaturePad = null;
 let technicianSignaturePad = null;
 
+// ==================== INDEXEDDB ====================
+class DatabaseManager {
+    constructor() {
+        this.db = null;
+        this.initPromise = null;
+    }
+    
+    async init() {
+        if (this.initPromise) {
+            return this.initPromise;
+        }
+        
+        this.initPromise = new Promise((resolve, reject) => {
+            if (!window.indexedDB) {
+                console.warn('IndexedDB non supporté, utilisation de localStorage uniquement');
+                this.db = { isIndexedDB: false };
+                resolve(this.db);
+                return;
+            }
+            
+            const request = indexedDB.open(CONFIG.indexedDB.name, CONFIG.indexedDB.version);
+            
+            request.onerror = (event) => {
+                console.error('Erreur IndexedDB:', event.target.error);
+                reject(event.target.error);
+            };
+            
+            request.onsuccess = (event) => {
+                this.db = event.target.result;
+                console.log('IndexedDB initialisé');
+                
+                // Vérifier et migrer les données depuis localStorage
+                this.migrateFromLocalStorage().then(() => {
+                    resolve(this.db);
+                });
+            };
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                const stores = CONFIG.indexedDB.stores;
+                
+                // Créer tous les stores s'ils n'existent pas
+                Object.values(stores).forEach(storeName => {
+                    if (!db.objectStoreNames.contains(storeName)) {
+                        const store = db.createObjectStore(storeName, { keyPath: 'id' });
+                        
+                        // Créer des index pour les recherches
+                        switch(storeName) {
+                            case 'clients':
+                                store.createIndex('name', 'name', { unique: false });
+                                store.createIndex('createdDate', 'createdDate', { unique: false });
+                                break;
+                            case 'materials':
+                                store.createIndex('clientId', 'clientId', { unique: false });
+                                store.createIndex('type', 'type', { unique: false });
+                                store.createIndex('verified', 'verified', { unique: false });
+                                break;
+                            case 'interventions':
+                                store.createIndex('clientId', 'clientId', { unique: false });
+                                store.createIndex('date', 'start', { unique: false });
+                                break;
+                            case 'syncQueue':
+                                store.createIndex('status', 'status', { unique: false });
+                                store.createIndex('timestamp', 'timestamp', { unique: false });
+                                break;
+                        }
+                    }
+                });
+            };
+        });
+        
+        return this.initPromise;
+    }
+    
+    async migrateFromLocalStorage() {
+        try {
+            const localStorageKeys = [
+                'firecheck_clients',
+                'firecheck_interventions',
+                'firecheck_factures',
+                'calendarEvents'
+            ];
+            
+            for (const key of localStorageKeys) {
+                const data = localStorage.getItem(key);
+                if (data) {
+                    const parsedData = JSON.parse(data);
+                    const storeName = this.getStoreNameFromKey(key);
+                    
+                    if (storeName) {
+                        await this.saveAll(storeName, Array.isArray(parsedData) ? parsedData : [parsedData]);
+                        console.log(`Migré ${parsedData.length || 1} éléments depuis localStorage vers ${storeName}`);
+                    }
+                }
+            }
+            
+            // Marquer la migration comme terminée
+            await this.save('settings', {
+                id: 'migration',
+                completed: true,
+                date: new Date().toISOString()
+            });
+            
+        } catch (error) {
+            console.error('Erreur migration localStorage:', error);
+        }
+    }
+    
+    getStoreNameFromKey(key) {
+        const mapping = {
+            'firecheck_clients': 'clients',
+            'firecheck_interventions': 'interventions',
+            'firecheck_factures': 'factures',
+            'calendarEvents': 'interventions' // Les événements du calendrier sont des interventions
+        };
+        return mapping[key];
+    }
+    
+    async save(storeName, data) {
+        if (!this.db || !this.db.isIndexedDB) {
+            // Fallback vers localStorage
+            return this.saveToLocalStorage(storeName, data);
+        }
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            
+            const request = store.put(data);
+            
+            request.onsuccess = () => {
+                // Sauvegarde double dans localStorage pour sécurité
+                this.saveToLocalStorage(storeName, data);
+                resolve();
+            };
+            
+            request.onerror = (event) => {
+                console.error(`Erreur sauvegarde ${storeName}:`, event.target.error);
+                // Fallback vers localStorage
+                this.saveToLocalStorage(storeName, data);
+                resolve();
+            };
+        });
+    }
+    
+    async saveAll(storeName, items) {
+        if (!this.db || !this.db.isIndexedDB) {
+            return this.saveAllToLocalStorage(storeName, items);
+        }
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            
+            items.forEach(item => {
+                store.put(item);
+            });
+            
+            transaction.oncomplete = () => {
+                // Sauvegarde double
+                this.saveAllToLocalStorage(storeName, items);
+                resolve();
+            };
+            
+            transaction.onerror = (event) => {
+                console.error(`Erreur sauvegarde multiple ${storeName}:`, event.target.error);
+                this.saveAllToLocalStorage(storeName, items);
+                resolve();
+            };
+        });
+    }
+    
+    async get(storeName, id) {
+        if (!this.db || !this.db.isIndexedDB) {
+            return this.getFromLocalStorage(storeName, id);
+        }
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readonly');
+            const store = transaction.objectStore(storeName);
+            
+            const request = store.get(id);
+            
+            request.onsuccess = (event) => {
+                resolve(event.target.result);
+            };
+            
+            request.onerror = (event) => {
+                console.error(`Erreur récupération ${storeName}:`, event.target.error);
+                this.getFromLocalStorage(storeName, id).then(resolve);
+            };
+        });
+    }
+    
+    async getAll(storeName, indexName = null, indexValue = null) {
+        if (!this.db || !this.db.isIndexedDB) {
+            return this.getAllFromLocalStorage(storeName);
+        }
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readonly');
+            const store = transaction.objectStore(storeName);
+            
+            let request;
+            if (indexName && indexValue !== null) {
+                const index = store.index(indexName);
+                request = index.getAll(indexValue);
+            } else {
+                request = store.getAll();
+            }
+            
+            request.onsuccess = (event) => {
+                resolve(event.target.result || []);
+            };
+            
+            request.onerror = (event) => {
+                console.error(`Erreur récupération multiple ${storeName}:`, event.target.error);
+                this.getAllFromLocalStorage(storeName).then(resolve);
+            };
+        });
+    }
+    
+    async delete(storeName, id) {
+        if (!this.db || !this.db.isIndexedDB) {
+            return this.deleteFromLocalStorage(storeName, id);
+        }
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            
+            const request = store.delete(id);
+            
+            request.onsuccess = () => {
+                this.deleteFromLocalStorage(storeName, id);
+                resolve();
+            };
+            
+            request.onerror = (event) => {
+                console.error(`Erreur suppression ${storeName}:`, event.target.error);
+                this.deleteFromLocalStorage(storeName, id);
+                resolve();
+            };
+        });
+    }
+    
+    // Méthodes localStorage (fallback)
+    saveToLocalStorage(storeName, data) {
+        const key = this.getLocalStorageKey(storeName);
+        const existing = this.getAllFromLocalStorage(storeName);
+        const index = existing.findIndex(item => item.id === data.id);
+        
+        if (index !== -1) {
+            existing[index] = data;
+        } else {
+            existing.push(data);
+        }
+        
+        localStorage.setItem(key, JSON.stringify(existing));
+    }
+    
+    saveAllToLocalStorage(storeName, items) {
+        const key = this.getLocalStorageKey(storeName);
+        localStorage.setItem(key, JSON.stringify(items));
+    }
+    
+    getFromLocalStorage(storeName, id) {
+        const items = this.getAllFromLocalStorage(storeName);
+        return items.find(item => item.id === id);
+    }
+    
+    getAllFromLocalStorage(storeName) {
+        const key = this.getLocalStorageKey(storeName);
+        const data = localStorage.getItem(key);
+        return data ? JSON.parse(data) : [];
+    }
+    
+    deleteFromLocalStorage(storeName, id) {
+        const items = this.getAllFromLocalStorage(storeName);
+        const filtered = items.filter(item => item.id !== id);
+        const key = this.getLocalStorageKey(storeName);
+        localStorage.setItem(key, JSON.stringify(filtered));
+    }
+    
+    getLocalStorageKey(storeName) {
+        return `firecheck_${storeName}`;
+    }
+    
+    // Méthodes utilitaires
+    async clearStore(storeName) {
+        if (!this.db || !this.db.isIndexedDB) {
+            const key = this.getLocalStorageKey(storeName);
+            localStorage.removeItem(key);
+            return;
+        }
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const request = store.clear();
+            
+            request.onsuccess = () => resolve();
+            request.onerror = (event) => reject(event.target.error);
+        });
+    }
+    
+    async getStats() {
+        const stores = Object.values(CONFIG.indexedDB.stores);
+        const stats = {};
+        
+        for (const storeName of stores) {
+            const items = await this.getAll(storeName);
+            stats[storeName] = items.length;
+        }
+        
+        return stats;
+    }
+}
+
+// Instance globale de DatabaseManager
+const dbManager = new DatabaseManager();
+
+// ==================== GESTION HORS LIGNE ====================
+class OfflineManager {
+    constructor() {
+        this.syncQueue = [];
+        this.retryCount = 0;
+        this.init();
+    }
+    
+    init() {
+        // Détecter les changements de connexion
+        window.addEventListener('online', () => this.handleOnline());
+        window.addEventListener('offline', () => this.handleOffline());
+        
+        // Initialiser l'état
+        AppState.isOnline = navigator.onLine;
+        AppState.offlineMode = !navigator.onLine;
+        
+        // Charger la file de synchronisation
+        this.loadSyncQueue();
+        
+        // Démarrer le worker de synchronisation
+        if (CONFIG.sync.enabled) {
+            this.startSyncWorker();
+        }
+    }
+    
+    async handleOnline() {
+        console.log('🟢 Connexion rétablie');
+        AppState.isOnline = true;
+        AppState.offlineMode = false;
+        
+        // Mettre à jour l'interface
+        this.updateOnlineStatus();
+        
+        // Synchroniser si configuré
+        if (CONFIG.offline.syncOnReconnect) {
+            await this.syncAll();
+        }
+        
+        // Nettoyer le cache si nécessaire
+        this.cleanOldCache();
+    }
+    
+    async handleOffline() {
+        console.log('🔴 Hors ligne');
+        AppState.isOnline = false;
+        AppState.offlineMode = true;
+        
+        // Mettre à jour l'interface
+        this.updateOnlineStatus();
+        
+        // Activer le mode hors ligne
+        this.enableOfflineMode();
+    }
+    
+    updateOnlineStatus() {
+        const statusElement = document.getElementById('connection-status');
+        if (!statusElement) return;
+        
+        if (AppState.isOnline) {
+            statusElement.innerHTML = '<i class="fas fa-wifi"></i> En ligne';
+            statusElement.className = 'status-indicator online';
+        } else {
+            statusElement.innerHTML = '<i class="fas fa-wifi-slash"></i> Hors ligne';
+            statusElement.className = 'status-indicator offline';
+            
+            // Afficher une notification
+            this.showOfflineNotification();
+        }
+    }
+    
+    showOfflineNotification() {
+        if (!AppState.offlineMode) return;
+        
+        const notification = document.createElement('div');
+        notification.className = 'offline-notification';
+        notification.innerHTML = `
+            <div class="offline-content">
+                <i class="fas fa-wifi-slash"></i>
+                <span>Mode hors ligne activé - Les modifications seront synchronisées lorsque la connexion sera rétablie</span>
+                <button onclick="this.parentElement.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        // Retirer automatiquement après 5 secondes
+        setTimeout(() => {
+            if (notification.parentElement) {
+                notification.remove();
+            }
+        }, 5000);
+    }
+    
+    enableOfflineMode() {
+        // Précharger les données nécessaires
+        this.precacheOfflineData();
+        
+        // Désactiver les fonctionnalités nécessitant une connexion
+        this.disableOnlineFeatures();
+        
+        // Afficher un indicateur dans l'interface
+        document.body.classList.add('offline-mode');
+    }
+    
+    disableOfflineMode() {
+        document.body.classList.remove('offline-mode');
+        this.enableOnlineFeatures();
+    }
+    
+    async precacheOfflineData() {
+        const pagesToCache = CONFIG.offline.cachePages;
+        
+        for (const page of pagesToCache) {
+            try {
+                await this.cachePageData(page);
+            } catch (error) {
+                console.error(`Erreur cache page ${page}:`, error);
+            }
+        }
+    }
+    
+    async cachePageData(page) {
+        // Cache spécifique selon la page
+        switch(page) {
+            case 'clients':
+                AppState.clients = await dbManager.getAll('clients');
+                break;
+            case 'materials':
+                // Les matériels sont chargés avec les clients
+                break;
+            case 'verification':
+                // Précharger les données de vérification
+                break;
+        }
+        
+        // Sauvegarder dans le cache du navigateur
+        const cacheKey = `firecheck_cache_${page}`;
+        const data = {
+            timestamp: new Date().toISOString(),
+            data: AppState[page] || []
+        };
+        
+        localStorage.setItem(cacheKey, JSON.stringify(data));
+    }
+    
+    disableOnlineFeatures() {
+        // Désactiver les boutons nécessitant une connexion
+        const onlineButtons = document.querySelectorAll('[data-requires-online]');
+        onlineButtons.forEach(button => {
+            button.disabled = true;
+            button.title = 'Fonctionnalité disponible uniquement en ligne';
+        });
+    }
+    
+    enableOnlineFeatures() {
+        const onlineButtons = document.querySelectorAll('[data-requires-online]');
+        onlineButtons.forEach(button => {
+            button.disabled = false;
+            button.title = '';
+        });
+    }
+    
+    async loadSyncQueue() {
+        this.syncQueue = await dbManager.getAll('syncQueue', 'status', 'pending');
+        console.log(`File de synchronisation chargée: ${this.syncQueue.length} éléments en attente`);
+    }
+    
+    async addToSyncQueue(action, data) {
+        const syncItem = {
+            id: `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            action: action,
+            data: data,
+            status: 'pending',
+            timestamp: new Date().toISOString(),
+            retryCount: 0
+        };
+        
+        await dbManager.save('syncQueue', syncItem);
+        this.syncQueue.push(syncItem);
+        
+        // Tenter une synchronisation immédiate si en ligne
+        if (AppState.isOnline) {
+            this.processSyncQueue();
+        }
+        
+        return syncItem.id;
+    }
+    
+    async processSyncQueue() {
+        if (!AppState.isOnline || this.syncQueue.length === 0) {
+            return;
+        }
+        
+        console.log(`Traitement de la file de synchronisation: ${this.syncQueue.length} éléments`);
+        
+        for (const item of this.syncQueue.filter(i => i.status === 'pending')) {
+            try {
+                await this.processSyncItem(item);
+                item.status = 'completed';
+                await dbManager.save('syncQueue', item);
+                
+            } catch (error) {
+                console.error(`Erreur synchronisation ${item.id}:`, error);
+                item.retryCount++;
+                
+                if (item.retryCount >= CONFIG.sync.retryAttempts) {
+                    item.status = 'failed';
+                    item.error = error.message;
+                }
+                
+                await dbManager.save('syncQueue', item);
+            }
+        }
+        
+        // Filtrer les éléments complétés
+        this.syncQueue = this.syncQueue.filter(item => item.status === 'pending');
+    }
+    
+    async processSyncItem(item) {
+        // Implémentation de la synchronisation avec le serveur
+        // À adapter selon votre backend
+        
+        switch(item.action) {
+            case 'saveClient':
+                // await api.saveClient(item.data);
+                break;
+            case 'saveMaterial':
+                // await api.saveMaterial(item.data);
+                break;
+            case 'saveIntervention':
+                // await api.saveIntervention(item.data);
+                break;
+        }
+        
+        // Simuler un délai
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    startSyncWorker() {
+        setInterval(() => {
+            if (AppState.isOnline && this.syncQueue.length > 0) {
+                this.processSyncQueue();
+            }
+        }, CONFIG.sync.interval);
+    }
+    
+    async syncAll() {
+        console.log('Synchronisation complète démarrée');
+        
+        // Synchroniser les clients
+        const clients = await dbManager.getAll('clients');
+        for (const client of clients) {
+            await this.addToSyncQueue('saveClient', client);
+        }
+        
+        // Synchroniser les matériels
+        const materials = await dbManager.getAll('materials');
+        for (const material of materials) {
+            await this.addToSyncQueue('saveMaterial', material);
+        }
+        
+        // Synchroniser les interventions
+        const interventions = await dbManager.getAll('interventions');
+        for (const intervention of interventions) {
+            await this.addToSyncQueue('saveIntervention', intervention);
+        }
+        
+        console.log('Synchronisation complète terminée');
+    }
+    
+    cleanOldCache() {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - CONFIG.offline.maxRetentionDays);
+        
+        // Nettoyer le cache localStorage
+        Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('firecheck_cache_')) {
+                try {
+                    const data = JSON.parse(localStorage.getItem(key));
+                    if (data && new Date(data.timestamp) < cutoffDate) {
+                        localStorage.removeItem(key);
+                    }
+                } catch (error) {
+                    // Ignorer les erreurs de parsing
+                }
+            }
+        });
+    }
+}
+
+// ==================== SAUVEGARDE AUTOMATIQUE ====================
+class AutoSaveManager {
+    constructor() {
+        this.saveTimeout = null;
+        this.lastSave = null;
+        this.init();
+    }
+    
+    init() {
+        if (!CONFIG.autoSave.enabled) return;
+        
+        // Sauvegarde périodique
+        setInterval(() => {
+            if (AppState.unsavedChanges) {
+                this.saveAllData();
+            }
+        }, CONFIG.autoSave.interval);
+        
+        // Sauvegarde avant déchargement
+        if (CONFIG.autoSave.onUnload) {
+            window.addEventListener('beforeunload', (event) => {
+                if (AppState.unsavedChanges) {
+                    this.saveAllData();
+                    event.preventDefault();
+                    event.returnValue = 'Vous avez des modifications non sauvegardées.';
+                }
+            });
+        }
+        
+        // Sauvegarde sur changement de page
+        const originalNavigateTo = window.navigateTo;
+        window.navigateTo = function(page) {
+            if (AppState.unsavedChanges) {
+                AutoSaveManager.instance.saveAllData();
+            }
+            return originalNavigateTo(page);
+        };
+        
+        // Détecter les modifications
+        this.setupChangeDetection();
+    }
+    
+    setupChangeDetection() {
+        // Observer les modifications dans les formulaires
+        const forms = document.querySelectorAll('form, input, textarea, select');
+        forms.forEach(element => {
+            element.addEventListener('change', () => {
+                this.markUnsavedChanges();
+            });
+            element.addEventListener('input', () => {
+                this.markUnsavedChanges();
+            });
+        });
+        
+        // Observer les boutons de sauvegarde
+        const saveButtons = document.querySelectorAll('[data-action="save"]');
+        saveButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                this.saveAllData();
+            });
+        });
+    }
+    
+    markUnsavedChanges() {
+        if (!AppState.unsavedChanges) {
+            AppState.unsavedChanges = true;
+            this.showUnsavedIndicator();
+        }
+        
+        // Débouncer la sauvegarde automatique
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+        }
+        
+        this.saveTimeout = setTimeout(() => {
+            if (AppState.unsavedChanges) {
+                this.saveAllData();
+            }
+        }, 10000); // Sauvegarde après 10 secondes d'inactivité
+    }
+    
+    showUnsavedIndicator() {
+        let indicator = document.getElementById('unsaved-changes-indicator');
+        
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.id = 'unsaved-changes-indicator';
+            indicator.className = 'unsaved-indicator';
+            indicator.innerHTML = `
+                <i class="fas fa-save"></i>
+                <span>Modifications non sauvegardées</span>
+                <button onclick="AutoSaveManager.instance.saveAllData()">
+                    <i class="fas fa-save"></i> Sauvegarder
+                </button>
+            `;
+            document.body.appendChild(indicator);
+        }
+        
+        indicator.classList.add('visible');
+    }
+    
+    hideUnsavedIndicator() {
+        const indicator = document.getElementById('unsaved-changes-indicator');
+        if (indicator) {
+            indicator.classList.remove('visible');
+            setTimeout(() => {
+                if (indicator.parentElement && !indicator.classList.contains('visible')) {
+                    indicator.remove();
+                }
+            }, 300);
+        }
+    }
+    
+    async saveAllData() {
+        if (!AppState.unsavedChanges) return;
+        
+        console.log('Sauvegarde automatique...');
+        
+        try {
+            // Sauvegarder les clients
+            if (AppState.clients.length > 0) {
+                await dbManager.saveAll('clients', AppState.clients);
+            }
+            
+            // Sauvegarder les interventions
+            if (AppState.currentInterventions.length > 0) {
+                await dbManager.saveAll('interventions', AppState.currentInterventions);
+            }
+            
+            // Sauvegarder l'état de l'application
+            await this.saveAppState();
+            
+            // Marquer comme sauvegardé
+            AppState.unsavedChanges = false;
+            AppState.lastSaveTime = new Date();
+            
+            // Cacher l'indicateur
+            this.hideUnsavedIndicator();
+            
+            // Ajouter à la file de synchronisation
+            if (AppState.isOnline) {
+                const offlineManager = new OfflineManager();
+                await offlineManager.addToSyncQueue('saveAll', {
+                    clients: AppState.clients,
+                    interventions: AppState.currentInterventions,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
+            console.log('✅ Sauvegarde automatique terminée');
+            
+        } catch (error) {
+            console.error('❌ Erreur sauvegarde automatique:', error);
+            this.showSaveError(error);
+        }
+    }
+    
+    async saveAppState() {
+        const appState = {
+            id: 'app_state',
+            currentClient: AppState.currentClient,
+            currentPage: AppState.currentPage,
+            currentFamilyFilter: AppState.currentFamilyFilter,
+            factureNumero: AppState.factureNumero,
+            lastSave: new Date().toISOString(),
+            version: '1.0'
+        };
+        
+        await dbManager.save('settings', appState);
+    }
+    
+    async loadAppState() {
+        const savedState = await dbManager.get('settings', 'app_state');
+        
+        if (savedState) {
+            AppState.currentPage = savedState.currentPage || 'clients';
+            AppState.currentFamilyFilter = savedState.currentFamilyFilter || ['all'];
+            AppState.factureNumero = savedState.factureNumero || '';
+            AppState.lastSaveTime = new Date(savedState.lastSave);
+            
+            // Restaurer la page courante
+            if (savedState.currentPage) {
+                navigateTo(savedState.currentPage);
+            }
+            
+            // Restaurer le client courant si possible
+            if (savedState.currentClient) {
+                const client = await dbManager.get('clients', savedState.currentClient.id);
+                if (client) {
+                    AppState.currentClient = client;
+                }
+            }
+        }
+    }
+    
+    showSaveError(error) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'save-error-notification';
+        errorDiv.innerHTML = `
+            <div class="error-content">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>Erreur de sauvegarde: ${error.message}</span>
+                <button onclick="this.parentElement.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+                <button onclick="AutoSaveManager.instance.saveAllData()" class="retry-btn">
+                    <i class="fas fa-redo"></i> Réessayer
+                </button>
+            </div>
+        `;
+        
+        document.body.appendChild(errorDiv);
+        
+        setTimeout(() => {
+            if (errorDiv.parentElement) {
+                errorDiv.remove();
+            }
+        }, 10000);
+    }
+}
+
+// Singleton
+AutoSaveManager.instance = new AutoSaveManager();
+
+// ==================== IMPORT/EXPORT AVANCÉ ====================
+class ImportExportManager {
+    constructor() {
+        this.exportInterval = null;
+        this.init();
+    }
+    
+    init() {
+        // Export automatique toutes les heures
+        this.startAutoExport();
+        
+        // Backup au démarrage
+        this.createStartupBackup();
+    }
+    
+    startAutoExport() {
+        // Vérifier si un export est nécessaire toutes les heures
+        this.exportInterval = setInterval(() => {
+            const lastExport = localStorage.getItem('last_auto_export');
+            const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+            
+            if (!lastExport || new Date(lastExport) < oneHourAgo) {
+                this.exportAllData(true); // Export silencieux
+                localStorage.setItem('last_auto_export', new Date().toISOString());
+            }
+        }, 15 * 60 * 1000); // Vérifier toutes les 15 minutes
+    }
+    
+    async createStartupBackup() {
+        // Créer un backup au démarrage si aucun récent n'existe
+        const lastBackup = localStorage.getItem('last_startup_backup');
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        
+        if (!lastBackup || new Date(lastBackup) < yesterday) {
+            await this.exportAllData(true);
+            localStorage.setItem('last_startup_backup', new Date().toISOString());
+        }
+    }
+    
+    async exportAllData(silent = false) {
+        try {
+            // Récupérer toutes les données
+            const clients = await dbManager.getAll('clients');
+            const interventions = await dbManager.getAll('interventions');
+            const factures = await dbManager.getAll('factures');
+            const settings = await dbManager.getAll('settings');
+            
+            const exportData = {
+                metadata: {
+                    exportDate: new Date().toISOString(),
+                    version: '2.0',
+                    recordCounts: {
+                        clients: clients.length,
+                        interventions: interventions.length,
+                        factures: factures.length
+                    }
+                },
+                data: {
+                    clients: clients,
+                    interventions: interventions,
+                    factures: factures,
+                    settings: settings
+                }
+            };
+            
+            // Générer le fichier
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+                type: 'application/json' 
+            });
+            
+            const url = URL.createObjectURL(blob);
+            const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const filename = `firecheck_backup_${timestamp}_${Date.now()}.json`;
+            
+            // Sauvegarder dans IndexedDB aussi
+            await dbManager.save('settings', {
+                id: `backup_${timestamp}`,
+                data: exportData,
+                timestamp: new Date().toISOString()
+            });
+            
+            // Télécharger automatiquement seulement si demandé
+            if (!silent) {
+                this.downloadFile(url, filename);
+            }
+            
+            // Nettoyer les vieux backups (garder les 5 derniers)
+            await this.cleanOldBackups();
+            
+            if (!silent) {
+                showSuccess(`Backup créé: ${filename} (${clients.length} clients, ${interventions.length} interventions)`);
+            }
+            
+            return exportData;
+            
+        } catch (error) {
+            console.error('Erreur export:', error);
+            if (!silent) {
+                showError('Erreur lors de la création du backup');
+            }
+            throw error;
+        }
+    }
+    
+    async importData(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            
+            reader.onload = async (event) => {
+                try {
+                    const importData = JSON.parse(event.target.result);
+                    
+                    // Validation des données
+                    if (!this.validateImportData(importData)) {
+                        throw new Error('Format de fichier invalide');
+                    }
+                    
+                    // Confirmation utilisateur
+                    if (!confirm(this.getImportConfirmationMessage(importData))) {
+                        reject(new Error('Import annulé'));
+                        return;
+                    }
+                    
+                    // Sauvegarde avant import
+                    await this.createPreImportBackup();
+                    
+                    // Importer les données
+                    await this.processImport(importData);
+                    
+                    // Recharger l'application
+                    await this.reloadAppAfterImport();
+                    
+                    showSuccess('Import réussi !');
+                    resolve();
+                    
+                } catch (error) {
+                    console.error('Erreur import:', error);
+                    showError(`Erreur import: ${error.message}`);
+                    reject(error);
+                }
+            };
+            
+            reader.onerror = () => {
+                reject(new Error('Erreur de lecture du fichier'));
+            };
+            
+            reader.readAsText(file);
+        });
+    }
+    
+    validateImportData(data) {
+        return data && 
+               data.metadata && 
+               data.data && 
+               Array.isArray(data.data.clients);
+    }
+    
+    getImportConfirmationMessage(data) {
+        const counts = data.metadata.recordCounts;
+        return `
+            Voulez-vous importer :
+            • ${counts.clients || 0} client(s)
+            • ${counts.interventions || 0} intervention(s)
+            • ${counts.factures || 0} facture(s)
+            
+            ⚠️ Cela écrasera vos données existantes.
+            Une sauvegarde automatique a été créée.
+        `;
+    }
+    
+    async createPreImportBackup() {
+        // Créer un backup spécial avant import
+        const backup = await this.exportAllData(true);
+        await dbManager.save('settings', {
+            id: 'pre_import_backup',
+            data: backup,
+            timestamp: new Date().toISOString()
+        });
+    }
+    
+    async processImport(importData) {
+        // Vider les stores existants
+        await dbManager.clearStore('clients');
+        await dbManager.clearStore('interventions');
+        await dbManager.clearStore('factures');
+        
+        // Importer les nouvelles données
+        if (importData.data.clients.length > 0) {
+            await dbManager.saveAll('clients', importData.data.clients);
+        }
+        
+        if (importData.data.interventions.length > 0) {
+            await dbManager.saveAll('interventions', importData.data.interventions);
+        }
+        
+        if (importData.data.factures.length > 0) {
+            await dbManager.saveAll('factures', importData.data.factures);
+        }
+        
+        // Mettre à jour les settings
+        await dbManager.save('settings', {
+            id: 'last_import',
+            data: importData.metadata,
+            timestamp: new Date().toISOString()
+        });
+    }
+    
+    async reloadAppAfterImport() {
+        // Recharger les données
+        AppState.clients = await dbManager.getAll('clients');
+        AppState.currentInterventions = await dbManager.getAll('interventions');
+        
+        // Réinitialiser l'état
+        AppState.currentClient = null;
+        AppState.unsavedChanges = false;
+        
+        // Rafraîchir l'interface
+        if (AppState.currentPage === 'clients') {
+            displayClientsList();
+        }
+        
+        updateClientInfoBadge();
+    }
+    
+    downloadFile(url, filename) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        // Libérer l'URL
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    
+    async cleanOldBackups() {
+        const backups = await dbManager.getAll('settings');
+        const backupKeys = backups
+            .filter(item => item.id.startsWith('backup_'))
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        
+        // Garder seulement les 5 derniers backups
+        if (backupKeys.length > 5) {
+            for (let i = 5; i < backupKeys.length; i++) {
+                await dbManager.delete('settings', backupKeys[i].id);
+            }
+        }
+    }
+    
+    // Export sélectif
+    async exportSelection(type, ids) {
+        let data = [];
+        
+        switch(type) {
+            case 'clients':
+                data = await Promise.all(
+                    ids.map(id => dbManager.get('clients', id))
+                );
+                break;
+            case 'interventions':
+                data = await Promise.all(
+                    ids.map(id => dbManager.get('interventions', id))
+                );
+                break;
+        }
+        
+        const exportData = {
+            type: type,
+            items: data.filter(item => item !== undefined),
+            exportDate: new Date().toISOString()
+        };
+        
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+            type: 'application/json' 
+        });
+        
+        const url = URL.createObjectURL(blob);
+        const filename = `firecheck_${type}_export_${Date.now()}.json`;
+        
+        this.downloadFile(url, filename);
+        showSuccess(`${data.length} ${type} exporté(s)`);
+    }
+}
+
 // ==================== INITIALISATION ====================
 document.addEventListener('DOMContentLoaded', function() {
     initApp();
 });
 
-function initApp() {
+async function initApp() {
     try {
-        // Charger les données
-        loadData();
+        // Afficher un écran de chargement
+        showLoading('Initialisation...');
         
-        // Initialiser les composants
+        // Initialiser les gestionnaires
+        await dbManager.init();
+        const offlineManager = new OfflineManager();
+        const importExportManager = new ImportExportManager();
+        
+        // Charger les données
+        await loadData();
+        
+        // Initialiser les composants UI
         initComponents();
         
         // Initialiser PWA
         initPWA();
         
-        // Afficher la première page
-        navigateTo('clients');
+        // Ajouter le CSS de gestion des données
+        addDataManagementCSS();
         
-        console.log('FireCheck Pro initialisé avec succès');
+        // Afficher la première page
+        navigateTo(AppState.currentPage || 'clients');
+        
+        // Ajouter l'UI de gestion des données
+        setTimeout(addDataManagementUI, 1000);
+        
+        // Cacher le chargement
+        closeLoading();
+        
+        // Afficher les statistiques
+        showDataStats();
+        
+        console.log('FireCheck Pro amélioré initialisé avec succès');
+        
     } catch (error) {
-        console.error('Erreur lors de l\'initialisation:', error);
+        console.error('Erreur initialisation:', error);
         showError('Erreur lors de l\'initialisation de l\'application');
+        closeLoading();
     }
-}
-
-function loadData() {
-    AppState.clients = loadFromStorage(CONFIG.localStorageKeys.clients) || [];
-    AppState.currentInterventions = loadFromStorage(CONFIG.localStorageKeys.interventions) || [];
 }
 
 function initComponents() {
@@ -108,6 +1298,169 @@ function initPWA() {
                 console.error('Échec Service Worker:', error);
             });
     }
+}
+
+// ==================== MODIFICATIONS DES FONCTIONS EXISTANTES ====================
+
+// Remplacez les fonctions de sauvegarde existantes
+async function saveClients() {
+    if (AppState.clients.length > 0) {
+        await dbManager.saveAll('clients', AppState.clients);
+        
+        // Marquer les changements non sauvegardés
+        AutoSaveManager.instance.markUnsavedChanges();
+        
+        // Ajouter à la file de sync
+        if (AppState.isOnline) {
+            const offlineManager = new OfflineManager();
+            await offlineManager.addToSyncQueue('saveClients', {
+                clients: AppState.clients,
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+}
+
+async function saveInterventions() {
+    if (AppState.currentInterventions.length > 0) {
+        await dbManager.saveAll('interventions', AppState.currentInterventions);
+        AutoSaveManager.instance.markUnsavedChanges();
+    }
+}
+
+// Modifier la fonction loadData
+async function loadData() {
+    try {
+        // Initialiser IndexedDB
+        await dbManager.init();
+        
+        // Charger depuis IndexedDB
+        AppState.clients = await dbManager.getAll('clients');
+        AppState.currentInterventions = await dbManager.getAll('interventions');
+        
+        // Charger l'état de l'application
+        await AutoSaveManager.instance.loadAppState();
+        
+        // Charger les événements du calendrier
+        loadCalendarEvents();
+        
+        // Afficher les statistiques
+        const stats = await dbManager.getStats();
+        console.log('Données chargées:', stats);
+        
+    } catch (error) {
+        console.error('Erreur chargement données:', error);
+        
+        // Fallback vers localStorage
+        const savedClients = localStorage.getItem('firecheck_clients');
+        const savedInterventions = localStorage.getItem('firecheck_interventions');
+        
+        if (savedClients) {
+            AppState.clients = JSON.parse(savedClients);
+        }
+        
+        if (savedInterventions) {
+            AppState.currentInterventions = JSON.parse(savedInterventions);
+        }
+        
+        // Charger aussi les événements du calendrier depuis localStorage
+        loadCalendarEvents();
+    }
+}
+
+// ==================== FONCTIONS DE STOCKAGE LOCAL ====================
+function loadFromStorage(key) {
+    try {
+        const item = localStorage.getItem(key);
+        return item ? JSON.parse(item) : null;
+    } catch (error) {
+        console.error('Erreur lors du chargement depuis le stockage:', error);
+        return null;
+    }
+}
+
+function saveToStorage(key, data) {
+    try {
+        localStorage.setItem(key, JSON.stringify(data));
+        return true;
+    } catch (error) {
+        console.error('Erreur lors de la sauvegarde dans le stockage:', error);
+        return false;
+    }
+}
+
+function clearStorage(key) {
+    try {
+        if (key) {
+            localStorage.removeItem(key);
+        } else {
+            localStorage.clear();
+        }
+        return true;
+    } catch (error) {
+        console.error('Erreur lors de la suppression du stockage:', error);
+        return false;
+    }
+}
+
+function getStorageKeys() {
+    try {
+        return Object.keys(localStorage);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des clés:', error);
+        return [];
+    }
+}
+
+function saveCalendarEvents() {
+    try {
+        saveToStorage('calendarEvents', AppState.calendarEvents);
+        console.log(`💾 ${AppState.calendarEvents.length} événement(s) sauvegardé(s)`);
+        return true;
+    } catch (error) {
+        console.error('❌ Erreur lors de la sauvegarde des événements:', error);
+        return false;
+    }
+}
+
+// ==================== GESTION DU CALENDRIER ====================
+function loadCalendarEvents() {
+    try {
+        // Charger les événements depuis le stockage local
+        const storedEvents = loadFromStorage('calendarEvents');
+        
+        if (storedEvents && Array.isArray(storedEvents)) {
+            AppState.calendarEvents = storedEvents;
+            console.log(`✅ ${AppState.calendarEvents.length} événement(s) chargé(s) depuis le stockage`);
+        } else {
+            // Initialiser avec des données par défaut si vide
+            AppState.calendarEvents = [];
+            console.log('📅 Aucun événement trouvé, initialisation avec tableau vide');
+        }
+        
+        // S'assurer que les événements sont aussi dans les interventions
+        mergeCalendarEventsWithInterventions();
+        
+    } catch (error) {
+        console.error('❌ Erreur lors du chargement des événements:', error);
+        // Initialiser avec tableau vide en cas d'erreur
+        AppState.calendarEvents = [];
+    }
+}
+
+function mergeCalendarEventsWithInterventions() {
+    // S'assurer que les événements du calendrier sont aussi dans les interventions
+    AppState.calendarEvents.forEach(event => {
+        // Vérifier si l'événement existe déjà dans les interventions
+        const existingIntervention = AppState.currentInterventions.find(i => i.id === event.id);
+        if (!existingIntervention) {
+            AppState.currentInterventions.push(event);
+        }
+    });
+    
+    // Mettre à jour le stockage
+    saveCalendarEvents();
+    saveInterventions();
 }
 
 // ==================== GESTION RESPONSIVE ====================
@@ -225,36 +1578,6 @@ function resizeSignatureCanvases() {
             }
         }
     });
-}
-
-// ==================== GESTION DES DONNÉES ====================
-function loadFromStorage(key) {
-    try {
-        const data = localStorage.getItem(key);
-        return data ? JSON.parse(data) : null;
-    } catch (error) {
-        console.error(`Erreur lors du chargement de ${key}:`, error);
-        return null;
-    }
-}
-
-function saveToStorage(key, data) {
-    try {
-        localStorage.setItem(key, JSON.stringify(data));
-        return true;
-    } catch (error) {
-        console.error(`Erreur lors de la sauvegarde de ${key}:`, error);
-        showError('Erreur lors de la sauvegarde des données');
-        return false;
-    }
-}
-
-function saveClients() {
-    saveToStorage(CONFIG.localStorageKeys.clients, AppState.clients);
-}
-
-function saveInterventions() {
-    saveToStorage(CONFIG.localStorageKeys.interventions, AppState.currentInterventions);
 }
 
 // ==================== NAVIGATION ====================
@@ -1649,7 +2972,8 @@ function selectTodayInCalendar(calendarDays) {
 }
 
 function getEventsForDay(day, month, year) {
-    return AppState.currentInterventions.filter(event => {
+    // Chercher dans les événements du calendrier
+    return AppState.calendarEvents.filter(event => {
         const eventDate = new Date(event.start);
         return eventDate.getDate() === day && 
                eventDate.getMonth() === month && 
@@ -1758,14 +3082,6 @@ function goToToday() {
     generateCalendar(AppState.currentMonth, AppState.currentYear);
 }
 
-function loadCalendarEvents() {
-    // Charger les événements depuis le localStorage si nécessaire
-    const savedEvents = loadFromStorage(CONFIG.localStorageKeys.interventions);
-    if (savedEvents) {
-        AppState.currentInterventions = savedEvents;
-    }
-}
-
 // ==================== INTERVENTIONS ====================
 function addIntervention() {
     updateInterventionClientList();
@@ -1871,7 +3187,16 @@ function saveEditedIntervention(interventionId) {
         }
     }
     
+    // Mettre à jour dans les événements du calendrier
+    const calendarIndex = AppState.calendarEvents.findIndex(e => e.id === interventionId);
+    if (calendarIndex !== -1) {
+        AppState.calendarEvents[calendarIndex] = updatedIntervention;
+    } else {
+        AppState.calendarEvents.push(updatedIntervention);
+    }
+    
     saveInterventions();
+    saveCalendarEvents();
     saveClients();
     closeModal('add-intervention-modal');
     generateCalendar(AppState.currentMonth, AppState.currentYear);
@@ -1928,7 +3253,16 @@ function saveIntervention() {
         client.interventions.push(intervention);
     }
     
+    // Ajouter aux événements du calendrier
+    const calendarIndex = AppState.calendarEvents.findIndex(e => e.id === interventionId);
+    if (calendarIndex !== -1) {
+        AppState.calendarEvents[calendarIndex] = intervention;
+    } else {
+        AppState.calendarEvents.push(intervention);
+    }
+    
     saveInterventions();
+    saveCalendarEvents();
     saveClients();
     closeModal('add-intervention-modal');
     generateCalendar(AppState.currentMonth, AppState.currentYear);
@@ -1997,7 +3331,11 @@ function deleteIntervention(interventionId) {
         saveClients();
     }
     
+    // Supprimer aussi des événements du calendrier
+    AppState.calendarEvents = AppState.calendarEvents.filter(e => e.id !== interventionId);
+    
     saveInterventions();
+    saveCalendarEvents();
     generateCalendar(AppState.currentMonth, AppState.currentYear);
     showSuccess('Intervention supprimée avec succès');
 }
@@ -2103,6 +3441,7 @@ function exportData() {
     const data = {
         clients: AppState.clients,
         interventions: AppState.currentInterventions,
+        calendarEvents: AppState.calendarEvents,
         exportDate: new Date().toISOString()
     };
     
@@ -2604,4 +3943,429 @@ function selectAlarmeInterventionType(type) {
     // À implémenter
 }
 
-console.log('FireCheck Pro - Application corrigée chargée avec succès');
+// ==================== UI POUR LA GESTION DES DONNÉES ====================
+function addDataManagementUI() {
+    // Ajouter un menu de gestion des données
+    const headerControls = document.querySelector('.header-controls');
+    if (!headerControls) return;
+    
+    const dataMenu = document.createElement('div');
+    dataMenu.className = 'data-management-menu';
+    dataMenu.innerHTML = `
+        <button class="btn btn-sm" onclick="showDataManagementModal()" 
+                title="Gestion des données" aria-label="Gestion données">
+            <i class="fas fa-database"></i>
+        </button>
+    `;
+    
+    headerControls.appendChild(dataMenu);
+}
+
+function showDataManagementModal() {
+    const modalContent = `
+        <div class="modal-body">
+            <div class="data-management-options">
+                <div class="data-option">
+                    <h4><i class="fas fa-save"></i> Sauvegarde</h4>
+                    <button class="btn btn-block" onclick="exportAllDataManual()">
+                        <i class="fas fa-download"></i> Exporter toutes les données
+                    </button>
+                    <button class="btn btn-block" onclick="createBackupNow()">
+                        <i class="fas fa-copy"></i> Créer un backup maintenant
+                    </button>
+                    <small>Dernière sauvegarde: <span id="last-backup-time">${getLastBackupTime()}</span></small>
+                </div>
+                
+                <div class="data-option">
+                    <h4><i class="fas fa-upload"></i> Restauration</h4>
+                    <button class="btn btn-block" onclick="triggerImport()">
+                        <i class="fas fa-upload"></i> Importer des données
+                    </button>
+                    <button class="btn btn-block" onclick="showBackupList()">
+                        <i class="fas fa-history"></i> Voir les backups
+                    </button>
+                </div>
+                
+                <div class="data-option">
+                    <h4><i class="fas fa-sync"></i> Synchronisation</h4>
+                    <div class="sync-status">
+                        <span>Statut: <span id="sync-status-indicator">${AppState.isOnline ? '🟢 En ligne' : '🔴 Hors ligne'}</span></span>
+                        <br>
+                        <span>Éléments en attente: <span id="sync-queue-count">0</span></span>
+                    </div>
+                    <button class="btn btn-block" onclick="forceSync()" ${!AppState.isOnline ? 'disabled' : ''}>
+                        <i class="fas fa-sync"></i> Forcer la synchronisation
+                    </button>
+                </div>
+                
+                <div class="data-option">
+                    <h4><i class="fas fa-database"></i> Stockage</h4>
+                    <div class="storage-info">
+                        <span>Méthode: <strong>IndexedDB + localStorage</strong></span>
+                        <br>
+                        <span>Résilience: <strong>Haute</strong></span>
+                        <br>
+                        <span>Données hors ligne: <strong>Activé</strong></span>
+                    </div>
+                    <button class="btn btn-block btn-danger" onclick="showClearDataConfirm()">
+                        <i class="fas fa-trash"></i> Effacer toutes les données
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-danger" onclick="closeModal('data-management-modal')">
+                <i class="fas fa-times"></i> Fermer
+            </button>
+        </div>
+    `;
+    
+    showCustomModal('data-management-modal', 'Gestion des données', modalContent);
+}
+
+// Fonctions utilitaires pour l'UI
+function exportAllDataManual() {
+    const importExportManager = new ImportExportManager();
+    importExportManager.exportAllData(false);
+}
+
+function createBackupNow() {
+    const importExportManager = new ImportExportManager();
+    importExportManager.exportAllData(true).then(() => {
+        showSuccess('Backup créé avec succès');
+    });
+}
+
+function triggerImport() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const importExportManager = new ImportExportManager();
+            importExportManager.importData(file);
+        }
+    };
+    input.click();
+}
+
+function forceSync() {
+    const offlineManager = new OfflineManager();
+    offlineManager.syncAll().then(() => {
+        showSuccess('Synchronisation forcée démarrée');
+    });
+}
+
+function getLastBackupTime() {
+    const lastBackup = localStorage.getItem('last_auto_export');
+    return lastBackup ? new Date(lastBackup).toLocaleString('fr-FR') : 'Jamais';
+}
+
+function showCustomModal(id, title, content) {
+    let modal = document.getElementById(id);
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = id;
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 1.2rem; border-bottom: 2px solid var(--danger); background: linear-gradient(135deg, #ffffff 0%, #fff5f5 100%);">
+                    <h3 style="margin: 0; color: var(--danger); font-size: 1.4rem; display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-database" style="color: var(--danger);"></i>
+                        ${title}
+                    </h3>
+                    <button class="btn btn-danger btn-sm" onclick="closeModal('${id}')" 
+                            style="display: flex; align-items: center; gap: 5px; padding: 0.5rem 1rem; font-weight: 600;">
+                        <i class="fas fa-times"></i> Fermer
+                    </button>
+                </div>
+                ${content}
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    modal.classList.add('active');
+}
+// ==================== CSS ADDITIONNEL ====================
+function addDataManagementCSS() {
+    const style = document.createElement('style');
+    style.textContent = `
+        /* Indicateur hors ligne */
+        .offline-notification {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px 20px;
+            z-index: 10000;
+            text-align: center;
+            border-bottom: 2px solid #f5c6cb;
+        }
+        
+        .offline-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .offline-content i {
+            font-size: 1.2em;
+        }
+        
+        .offline-content button {
+            background: none;
+            border: none;
+            color: #721c24;
+            cursor: pointer;
+            font-size: 1.2em;
+        }
+        
+        /* Indicateur modifications non sauvegardées */
+        .unsaved-indicator {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #fff3cd;
+            color: #856404;
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 9999;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+        
+        .unsaved-indicator.visible {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        
+        .unsaved-indicator button {
+            background: #856404;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        
+        /* Gestion des données */
+        .data-management-menu {
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .data-management-options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 20px 0;
+        }
+        
+        .data-option {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .data-option h4 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+        
+        .sync-status, .storage-info {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 0.9em;
+        }
+        
+        #sync-status-indicator {
+            font-weight: bold;
+        }
+        
+        .online #sync-status-indicator {
+            color: #28a745;
+        }
+        
+        .offline #sync-status-indicator {
+            color: #dc3545;
+        }
+        
+        /* Mode hors ligne */
+        .offline-mode [data-requires-online] {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Statut de connexion */
+        .status-indicator {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        
+        .status-indicator.online {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-indicator.offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        /* Erreurs de sauvegarde */
+        .save-error-notification {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid #f5c6cb;
+            z-index: 10000;
+            max-width: 400px;
+        }
+        
+        .error-content {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .retry-btn {
+            background: #721c24;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .data-management-options {
+                grid-template-columns: 1fr;
+            }
+            
+            .unsaved-indicator {
+                left: 20px;
+                right: 20px;
+                bottom: 10px;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// ==================== FONCTIONS D'UTILITÉ SUPPLÉMENTAIRES ====================
+function showLoading(message) {
+    let loading = document.getElementById('loading-overlay');
+    if (!loading) {
+        loading = document.createElement('div');
+        loading.id = 'loading-overlay';
+        loading.className = 'loading-overlay';
+        loading.innerHTML = `
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <p>${message || 'Chargement...'}</p>
+            </div>
+        `;
+        document.body.appendChild(loading);
+    }
+    loading.classList.add('active');
+}
+
+function closeLoading() {
+    const loading = document.getElementById('loading-overlay');
+    if (loading) {
+        loading.classList.remove('active');
+        setTimeout(() => {
+            if (loading.parentElement) {
+                loading.remove();
+            }
+        }, 300);
+    }
+}
+
+function showDataStats() {
+    setTimeout(async () => {
+        const stats = await dbManager.getStats();
+        const message = `
+            📊 Statistiques données:
+            • ${stats.clients || 0} client(s)
+            • ${stats.materials || 0} matériel(s)
+            • ${stats.interventions || 0} intervention(s)
+            • ${stats.factures || 0} facture(s)
+            • ${stats.syncQueue || 0} élément(s) en attente de sync
+        `;
+        console.log(message);
+    }, 1000);
+}
+
+// ==================== DÉBOGAGE ====================
+console.log('🚀 FireCheck Pro - Initialisation...');
+
+// Vérifier si les fonctions existent
+if (typeof loadFromStorage === 'undefined') {
+    console.log('⚠️ loadFromStorage non définie, création...');
+    
+    // Définir les fonctions manquantes
+    window.loadFromStorage = function(key) {
+        try {
+            const item = localStorage.getItem(key);
+            return item ? JSON.parse(item) : null;
+        } catch (error) {
+            console.error('Erreur loadFromStorage:', error);
+            return null;
+        }
+    };
+    
+    window.saveToStorage = function(key, data) {
+        try {
+            localStorage.setItem(key, JSON.stringify(data));
+            return true;
+        } catch (error) {
+            console.error('Erreur saveToStorage:', error);
+            return false;
+        }
+    };
+}
+
+// Vérifier que localStorage est disponible
+if (typeof localStorage === 'undefined') {
+    console.error('❌ localStorage non disponible');
+    alert('Attention: Votre navigateur ne supporte pas le stockage local. Certaines fonctionnalités seront limitées.');
+}
+
+// Fonctions globales exposées
+window.exportAllDataManual = exportAllDataManual;
+window.createBackupNow = createBackupNow;
+window.triggerImport = triggerImport;
+window.forceSync = forceSync;
+window.showDataManagementModal = showDataManagementModal;
+
+// Garder la compatibilité avec l'ancien code
+window.saveClients = saveClients;
+window.saveInterventions = saveInterventions;
+
+console.log('FireCheck Pro - Système de données avancé chargé');

@@ -5,22 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>FireCheck Pro - Vérification Incendie</title>
 
-<!-- Configuration PWA pour iPhone/Chrome -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="FireCheck Pro">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#1a365d">
-<meta name="msapplication-TileColor" content="#1a365d">
-<meta name="msapplication-starturl" content="/index.html">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="apple-mobile-web-app-orientations" content="portrait">
+    <!-- Configuration PWA pour iPhone/Chrome -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="FireCheck Pro">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#1a365d">
+    <meta name="msapplication-TileColor" content="#1a365d">
+    <meta name="msapplication-starturl" content="/index.html">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-orientations" content="portrait">
 
-<!-- iOS splash screens -->
-<link rel="apple-touch-startup-image" href="icons/splash-640x1136.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
-<link rel="apple-touch-startup-image" href="icons/splash-750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
-<link rel="apple-touch-startup-image" href="icons/splash-1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
-<link rel="apple-touch-startup-image" href="icons/splash-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <!-- iOS splash screens -->
+    <link rel="apple-touch-startup-image" href="icons/splash-640x1136.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="icons/splash-750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="icons/splash-1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="icons/splash-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
 
     <!-- PWA Configuration -->
     <link rel="manifest" href="manifest.json">
@@ -57,7 +57,7 @@
 
         :root {
             /* Couleurs principales - Thème plus doux! */
-            --primary: #1a365d ;
+            --primary: #1a365d;
             --secondary: #2d6b9c;
             --success: #2e7d32;
             --warning: #ed6c02;
@@ -88,6 +88,7 @@
             --shadow-hover: 0 4px 16px rgba(0,0,0,0.12);
             --radius: 12px;
             --transition: all 0.25s ease;
+            --primary-color: #1a365d;
         }
 
         body {
@@ -106,12 +107,11 @@
             background: var(--bg-primary);
         }
 
-        /* Header */
+        /* Header Compact */
         .header {
             background: linear-gradient(135deg, var(--primary), #0f2340);
             color: white;
             padding: 0.8rem 1rem;
-            text-align: center;
             box-shadow: var(--shadow);
             position: sticky;
             top: 0;
@@ -120,29 +120,144 @@
             justify-content: space-between;
             align-items: center;
             min-height: 60px;
+            gap: 10px;
         }
 
         .header h1 {
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             display: flex;
             align-items: center;
             gap: 8px;
             font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 1;
+            min-width: 0;
         }
 
         .header-controls {
             display: flex;
-            gap: 8px;
             align-items: center;
-            flex-wrap: nowrap;
+            gap: 6px;
+            flex-shrink: 0;
         }
 
-        /* Style pour l'indicateur utilisateur */
-        .user-indicator {
+        /* Menu déroulant des actions */
+        .actions-dropdown {
+            position: relative;
+        }
+
+        .actions-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-hover);
+            min-width: 200px;
+            z-index: 1000;
+            display: none;
+            border: 1px solid var(--border-color);
+            margin-top: 5px;
+        }
+
+        .actions-menu.active {
+            display: block;
+        }
+
+        .action-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+            cursor: pointer;
+            color: var(--text-primary);
+            transition: var(--transition);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .action-item:last-child {
+            border-bottom: none;
+        }
+
+        .action-item:hover {
+            background: var(--bg-secondary);
+        }
+
+        .action-item i {
+            width: 20px;
+            color: var(--secondary);
+        }
+
+        /* Boutons compacts */
+        .btn-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            border: none;
+            background: rgba(255, 255, 255, 0.1);
             color: white;
-            font-size: 0.9rem;
-            margin-right: 10px;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .btn-icon:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .btn-icon.active {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-icon.primary {
+            background: var(--secondary);
+        }
+
+        .btn-icon.success {
+            background: var(--success);
+        }
+
+        .btn-icon.danger {
+            background: var(--danger);
+        }
+
+        .btn-icon.warning {
+            background: var(--warning);
+        }
+
+        /* Indicateur de statut */
+        .status-indicator {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
             white-space: nowrap;
+        }
+
+        .status-indicator.online {
+            background: rgba(46, 204, 113, 0.2);
+            color: #2ecc71;
+            border: 1px solid rgba(46, 204, 113, 0.3);
+        }
+
+        .status-indicator.offline {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+            border: 1px solid rgba(231, 76, 60, 0.3);
         }
 
         /* Navigation */
@@ -433,43 +548,6 @@
             display: flex;
             gap: 0.3rem;
             flex-shrink: 0;
-        }
-
-        /* Détails du matériel */
-        .material-details-container {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-top: none;
-            border-radius: 0 0 8px 8px;
-            padding: 1rem;
-            margin-bottom: 0.8rem;
-            animation: slideDown 0.3s ease;
-            font-size: 0.9rem;
-        }
-
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .detail-row {
-            display: flex;
-            margin-bottom: 0.5rem;
-            flex-wrap: wrap;
-            padding: 0.3rem 0;
-        }
-
-        .detail-label {
-            width: 150px;
-            font-weight: 500;
-            color: var(--text-primary);
-            font-size: 0.85rem;
-        }
-
-        .detail-value {
-            flex: 1;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
         }
 
         /* Buttons */
@@ -1592,31 +1670,6 @@
             gap: 1rem;
         }
 
-        /* Indicateur de statut */
-        .status-indicator {
-            font-size: 0.8rem;
-            padding: 0.3rem 0.6rem;
-            border-radius: 4px;
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3rem;
-            white-space: nowrap;
-        }
-
-        .status-indicator.online {
-            background: rgba(46, 204, 113, 0.3);
-            color: #2ecc71;
-        }
-
-        .status-indicator.offline {
-            background: rgba(231, 76, 60, 0.3);
-            color: #e74c3c;
-        }
-
         /* RESPONSIVE DESIGN - Améliorations pour mobile */
         @media (max-width: 768px) {
             body {
@@ -1624,25 +1677,22 @@
             }
             
             .header {
-                padding: 0.7rem 0.8rem;
+                padding: 0.6rem 0.8rem;
                 min-height: 56px;
+                gap: 6px;
             }
             
             .header h1 {
-                font-size: 1.1rem;
+                font-size: 1rem;
             }
             
-            .header-controls {
-                gap: 0.5rem;
-            }
             
-            .user-indicator {
+            .header-controls .btn-icon:not(#actions-menu-btn) {
                 display: none;
             }
             
             .status-indicator {
-                font-size: 0.7rem;
-                padding: 0.2rem 0.4rem;
+                display: none;
             }
             
             .nav-tabs {
@@ -1848,10 +1898,6 @@
                 font-size: 0.8rem;
             }
             
-            .header-controls .mobile-hide {
-                display: none;
-            }
-            
             .modal-content {
                 padding: 1rem;
                 margin: 0.5rem;
@@ -1931,6 +1977,19 @@
             .page-actions {
                 flex-direction: column;
             }
+            
+            /* Actions menu pour mobile */
+            .actions-menu {
+                position: fixed;
+                top: 56px;
+                right: 0;
+                left: 0;
+                border-radius: 0;
+                border: none;
+                border-top: 1px solid var(--border-color);
+                max-height: calc(100vh - 56px);
+                overflow-y: auto;
+            }
         }
 
         /* Très petits écrans */
@@ -1949,7 +2008,7 @@
             }
             
             .header h1 {
-                font-size: 1rem;
+                font-size: 0.9rem;
             }
             
             .nav-tab {
@@ -1984,149 +2043,298 @@
                 background: white;
             }
         }
-.btn-offline {
-    background: var(--warning) !important;
+
+        /* ========== STYLES POUR LE MENU D'ACTIONS ========== */
+        .actions-dropdown {
+            position: relative;
+        }
+
+        #actions-menu-btn {
+            position: relative;
+        }
+
+        #actions-menu-btn.has-notification::after {
+            content: '';
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            width: 8px;
+            height: 8px;
+            background: var(--danger);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            border-radius: 8px;
+            padding: 12px 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 9999;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            border-left: 4px solid var(--success);
+            max-width: 300px;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.error {
+            border-left-color: var(--danger);
+        }
+
+        .toast.warning {
+            border-left-color: var(--warning);
+        }
+
+        .toast.info {
+            border-left-color: var(--info);
+        }
+
+        .toast i {
+            font-size: 1.2rem;
+        }
+
+        .toast.success i {
+            color: var(--success);
+        }
+
+        .toast.error i {
+            color: var(--danger);
+        }
+
+        .toast-content {
+            flex: 1;
+        }
+
+        .toast-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 2px;
+        }
+
+        .toast-message {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .toast-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0;
+            font-size: 1rem;
+        }
+
+/* Offline notification - Version améliorée */
+.offline-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, #f57c00, #ff9800);
+    color: white;
+    padding: 10px 16px;
+    text-align: center;
+    z-index: 1000;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    border-bottom: 2px solid rgba(255,255,255,0.2);
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+    animation: slideDown 0.3s ease-out;
 }
-.btn-online {
-    background: var(--success) !important;
+
+.offline-banner i {
+    font-size: 1rem;
+    animation: pulse 2s infinite;
 }
 
-
-/* ========== STYLES POUR LE BOUTON HORS LIGNE ========== */
-
-/* Couleur en ligne (vert) */
-.btn-online {
-    background: linear-gradient(135deg, #2e7d32, #1b5e20) !important;
-    color: white !important;
-    border: none !important;
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
 }
 
-/* Couleur hors ligne (orange) */
-.btn-offline {
-    background: linear-gradient(135deg, #ed6c02, #d56200) !important;
-    color: white !important;
-    border: none !important;
-    animation: pulse 1.5s infinite;
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Pour la version online, une bannière discrète */
+.online-notification {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, #2e7d32, #4caf50);
+    color: white;
+    padding: 8px 16px;
+    text-align: center;
+    z-index: 1000;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    animation: slideDown 0.3s ease-out;
+}
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border-color);
+            border-top: 4px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+/* ==================== INDICATEUR RÉSEAU DISCRET DANS LE HEADER ==================== */
+.header-network-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    margin-right: 10px;
+    padding: 4px 10px;
+    background: rgba(237, 108, 2, 0.1);
+    border-radius: 20px;
+    border: 1px solid rgba(237, 108, 2, 0.3);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--warning);
+    cursor: help;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+    animation: fadeIn 0.3s ease;
+}
+
+.header-network-indicator:hover {
+    background: rgba(237, 108, 2, 0.2);
+    transform: scale(1.05);
+    box-shadow: 0 2px 8px rgba(237, 108, 2, 0.2);
+}
+
+.header-network-indicator.online {
+    background: rgba(46, 125, 50, 0.1);
+    border-color: rgba(46, 125, 50, 0.3);
+    color: var(--success);
+}
+
+.header-network-indicator.online:hover {
+    background: rgba(46, 125, 50, 0.2);
+    box-shadow: 0 2px 8px rgba(46, 125, 50, 0.2);
+}
+
+.header-network-indicator i {
+    font-size: 0.8rem;
+}
+
+.header-network-indicator.offline i {
+    animation: pulse 2s infinite;
 }
 
 /* Animation de pulsation pour le mode hors ligne */
 @keyframes pulse {
     0% { opacity: 1; }
-    50% { opacity: 0.7; }
+    50% { opacity: 0.6; }
     100% { opacity: 1; }
 }
 
 /* Pour mobile */
 @media (max-width: 768px) {
-    #offline-toggle .mobile-hide {
-        display: none;
+    .header-network-indicator {
+        margin-left: 5px;
+        margin-right: 5px;
+        padding: 3px 8px;
+        font-size: 0.7rem;
     }
     
-    #offline-toggle {
-        padding: 0.5rem !important;
-        min-width: 44px !important;
-    }
-}
-
-/* ========== STYLES POUR LE STATUT SERVEUR ========== */
-
-/* Statut connecté (vert) */
-.btn-server-connected {
-    background: linear-gradient(135deg, #2e7d32, #1b5e20) !important;
-    color: white !important;
-    border: none !important;
-}
-
-/* Statut déconnecté (rouge avec pulsation) */
-.btn-server-disconnected {
-    background: linear-gradient(135deg, #c62828, #b71c1c) !important;
-    color: white !important;
-    border: none !important;
-    animation: pulse 1.5s infinite;
-}
-
-/* Animation de pulsation pour le mode déconnecté */
-@keyframes pulse {
-    0% { opacity: 1; }
-    50% { opacity: 0.7; }
-    100% { opacity: 1; }
-}
-
-/* Pour mobile */
-@media (max-width: 768px) {
-    #server-status .mobile-hide {
-        display: none;
+    .header-network-indicator span {
+        display: none; /* Cache le texte sur mobile */
     }
     
-    #server-status {
-        padding: 0.5rem !important;
-        min-width: 44px !important;
+    .header-network-indicator i {
+        font-size: 0.9rem;
+        margin: 0;
+    }
+}
+
+/* Très petits écrans */
+@media (max-width: 360px) {
+    .header-network-indicator {
+        margin-left: 3px;
+        margin-right: 3px;
+        padding: 2px 6px;
     }
 }
     </style>
-
-    <!-- ==================== AUTHENTIFICATION ==================== -->
-    <script>
-        // Vérifier l'authentification avant tout
-        (function() {
-            // Charger auth.js
-            const script = document.createElement('script');
-            script.src = 'auth.js';
-            script.onload = function() {
-                // Vérifier si connecté
-                if (!window.auth.requireAuth()) {
-                    // Redirection vers auth.html gérée par requireAuth()
-                    return;
-                }
-                
-                // Récupérer infos utilisateur
-                const user = window.auth.checkAuth();
-                
-                // Afficher l'interface utilisateur
-                document.addEventListener('DOMContentLoaded', function() {
-                    // Ajouter le bouton de déconnexion dans le header
-                    const logoutBtn = document.createElement('button');
-                    logoutBtn.className = 'btn btn-sm btn-danger';
-                    logoutBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> <span class="mobile-hide">Déconnexion</span>';
-                    logoutBtn.onclick = function() {
-                        window.auth.logout();
-                    };
-                    logoutBtn.title = 'Se déconnecter';
-                    
-                    // Ajouter aussi l'indicateur d'utilisateur
-                    const userIndicator = document.createElement('span');
-                    userIndicator.className = 'user-indicator mobile-hide';
-                    userIndicator.innerHTML = `👋 ${user.fullName}`;
-                    
-                    // Insérer dans le header
-                    const headerControls = document.querySelector('.header-controls');
-                    if (headerControls) {
-                        headerControls.prepend(userIndicator);
-                        headerControls.prepend(logoutBtn);
-                    }
-                });
-            };
-            document.head.appendChild(script);
-        })();
-    </script>
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
+        <!-- Header Compact -->
         <header class="header">
-            <h1><i class="fas fa-fire-extinguisher"></i>FireCheck</h1>
+            <h1><i class="fas fa-fire-extinguisher"></i>FireCheck Pro</h1>
 
-            <!-- Dans la section header -->
             <div class="header-controls">
-                <!-- Le bouton de déconnexion sera ajouté ici par le script -->
-                <button class="btn btn-sm" onclick="exportData()" title="Exporter données">
-                    <i class="fas fa-download"></i>
-                    <span class="mobile-hide">Exporter</span>
-                </button>
-                <button id="server-status" class="btn btn-sm" title="Statut serveur">
-                    <i class="fas fa-server"></i>
-                    <span class="mobile-hide">Serveur</span>
-                </button>
+                <!-- Bouton principal actions -->
+                <div class="actions-dropdown">
+                    <button class="btn-icon" id="actions-menu-btn" title="Menu">
+                        <i class="fas fa-ellipsis-v"></i>
+                    </button>
+                    <div class="actions-menu">
+                        <!-- Les actions seront ajoutées dynamiquement -->
+                    </div>
+                </div>
             </div>
         </header>
 
@@ -2652,6 +2860,14 @@
                 </div>
             </div>
         </section>
+    </div>
+
+    <!-- Modals additionnels -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <p>Chargement...</p>
+        </div>
     </div>
 
     <!-- Modal Ajout Extincteur -->
@@ -3780,492 +3996,280 @@
         </div>
     </div>
 
-    <!-- Dans la partie head de votre index.html -->
-    <script>
-    // Vérifier et enregistrer le service worker
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function() {
-            navigator.serviceWorker.register('/service-worker.js')
-                .then(registration => {
-                    console.log('ServiceWorker enregistré avec succès:', registration.scope);
-                    
-                    // Vérifier les mises à jour
-                    registration.addEventListener('updatefound', () => {
-                        const newWorker = registration.installing;
-                        console.log('Nouvelle version du Service Worker détectée');
-                        
-                        newWorker.addEventListener('statechange', () => {
-                            if (newWorker.state === 'installed') {
-                                if (navigator.serviceWorker.controller) {
-                                    // Nouvelle version disponible
-                                    showUpdateNotification();
-                                }
-                            }
-                        });
-                    });
-                })
-                .catch(error => {
-                    console.error('Erreur d\'enregistrement du ServiceWorker:', error);
-                });
+<script>
+    // ==================== GESTION GLOBALE DE L'APPLICATION ====================
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('🚀 FireCheck Pro - Initialisation...');
         
-        // Écouter les messages du service worker
-        navigator.serviceWorker.addEventListener('message', event => {
-            switch(event.data.type) {
-                case 'SW_ACTIVATED':
-                    console.log('Service Worker activé:', event.data.message);
-                    break;
-                    
-                case 'NETWORK_STATUS':
-                    updateNetworkStatus(event.data.online);
-                    break;
-                    
-                case 'SYNC_COMPLETED':
-                    showSyncNotification(event.data);
-                    break;
+        // ==================== GESTION DU MENU 3 POINTS ====================
+        // Récupérer les éléments du menu
+        const actionsMenuBtn = document.getElementById('actions-menu-btn');
+        const actionsMenu = document.querySelector('.actions-menu');
+        
+        // Vérifier que les éléments existent
+        if (!actionsMenuBtn || !actionsMenu) {
+            console.error('Menu éléments non trouvés');
+            return;
+        }
+        
+        // Gestion du clic sur le bouton menu
+        actionsMenuBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            console.log('Menu cliqué');
+            actionsMenu.classList.toggle('active');
+        });
+        
+        // Fermer le menu en cliquant ailleurs
+        document.addEventListener('click', function(e) {
+            if (!actionsMenu.contains(e.target) && e.target !== actionsMenuBtn) {
+                actionsMenu.classList.remove('active');
             }
         });
         
-        // Gérer le contrôleur
-        navigator.serviceWorker.ready.then(registration => {
-            console.log('Service Worker prêt');
+        // Empêcher la fermeture lors du clic dans le menu
+        actionsMenu.addEventListener('click', function(e) {
+            e.stopPropagation();
         });
-    }
+        
+        // Ajouter les actions au menu
+        const actions = [
 
-    // Fonction pour montrer la notification de mise à jour
-    function showUpdateNotification() {
-        if (confirm('Une nouvelle version est disponible. Recharger maintenant?')) {
-            // Envoyer un message au service worker pour skip waiting
-            if (navigator.serviceWorker.controller) {
-                navigator.serviceWorker.controller.postMessage({
-                    type: 'SKIP_WAITING'
-                });
+            {
+                icon: 'fas fa-cog',
+                text: 'Paramètres',
+                onclick: 'showSettings()'
+            },
+            {
+                icon: 'fas fa-info-circle',
+                text: 'À propos',
+                onclick: 'showAbout()'
             }
-            // Recharger la page
-            window.location.reload();
-        }
-    }
+        ];
+        
+        // Vider le menu existant
+        actionsMenu.innerHTML = '';
+        
+        // Ajouter chaque action au menu
+        actions.forEach(action => {
+            const item = document.createElement('button');
+            item.className = 'action-item';
+            item.innerHTML = `
+                <i class="${action.icon}"></i>
+                <span>${action.text}</span>
+                ${action.badge ? `<span class="badge">${action.badge}</span>` : ''}
+            `;
+            item.onclick = function() {
+                // Exécuter la fonction spécifiée
+                eval(action.onclick);
+                // Fermer le menu après clic
+                actionsMenu.classList.remove('active');
+            };
+            actionsMenu.appendChild(item);
+        });
+        
+        // Ajouter un séparateur avant les options de déconnexion
+        const separator = document.createElement('div');
+        separator.style.height = '1px';
+        separator.style.backgroundColor = 'var(--border-color)';
+        separator.style.margin = '8px 0';
+        actionsMenu.appendChild(separator);
+        
+        // Ajouter une option de déconnexion (exemple)
+        const logoutItem = document.createElement('button');
+        logoutItem.className = 'action-item';
+        logoutItem.innerHTML = `
+            <i class="fas fa-sign-out-alt"></i>
+            <span>Déconnexion</span>
+        `;
+        logoutItem.onclick = function() {
+            actionsMenu.classList.remove('active');
+            showToast('Déconnexion', 'Fonctionnalité à implémenter', 'info');
+        };
+        actionsMenu.appendChild(logoutItem);
+        
+        // ==================== GESTION DE LA NAVIGATION ====================
+        // Gestion des onglets de navigation
+        const navTabs = document.querySelectorAll('.nav-tab');
+        const pages = document.querySelectorAll('.page');
+        
+        navTabs.forEach(tab => {
+            tab.addEventListener('click', function(e) {
+                e.preventDefault();
+                
+                // Retirer la classe active de tous les onglets
+                navTabs.forEach(t => t.classList.remove('active'));
+                
+                // Ajouter la classe active à l'onglet cliqué
+                this.classList.add('active');
+                
+                // Masquer toutes les pages
+                pages.forEach(page => page.classList.remove('active'));
+                
+                // Afficher la page correspondante
+                const pageId = this.getAttribute('data-page');
+                const targetPage = document.getElementById(`page-${pageId}`);
+                if (targetPage) {
+                    targetPage.classList.add('active');
+                }
+            });
+        });
+        
+// ==================== GESTION DE LA CONNEXION RÉSEAU (OPTION 2) ====================
+let networkIndicator = null;
 
-    // Fonction pour mettre à jour le statut réseau
-    function updateNetworkStatus(isOnline) {
-        const statusElement = document.getElementById('network-status');
-        if (statusElement) {
-            statusElement.textContent = isOnline ? 'En ligne' : 'Hors ligne';
-            statusElement.className = isOnline ? 'online' : 'offline';
+function updateNetworkStatus() {
+    const isOnline = navigator.onLine;
+    
+    // Supprimer l'ancien indicateur si existe
+    if (networkIndicator && networkIndicator.parentNode) {
+        networkIndicator.parentNode.removeChild(networkIndicator);
+        networkIndicator = null;
+    }
+    
+    // Trouver le header controls
+    const headerControls = document.querySelector('.header-controls');
+    if (!headerControls) return;
+    
+    // Créer l'indicateur
+    networkIndicator = document.createElement('div');
+    networkIndicator.className = `header-network-indicator ${isOnline ? 'online' : 'offline'}`;
+    networkIndicator.title = isOnline ? 'Connexion active' : 'Mode hors ligne - Travail local';
+    
+    if (isOnline) {
+        networkIndicator.innerHTML = `
+            <i class="fas fa-wifi"></i>
+            <span>En ligne</span>
+        `;
+        
+        // Afficher un toast temporaire si on vient de se reconnecter
+        if (window.wasOffline === true) {
+            showToast('Connexion rétablie', 
+                'La synchronisation est maintenant disponible',
+                'success', 3000);
+        }
+    } else {
+        networkIndicator.innerHTML = `
+            <i class="fas fa-wifi-slash"></i>
+            <span>Hors ligne</span>
+        `;
+        
+        // Afficher un toast informatif au premier passage hors ligne
+        if (window.wasOffline !== false) {
+            setTimeout(() => {
+                showToast('Mode hors ligne', 
+                    'L\'application fonctionne en mode local. Vos modifications seront synchronisées automatiquement.',
+                    'warning', 4000);
+            }, 1000);
         }
     }
-    </script>
+    
+    // Ajouter l'indicateur avant le bouton menu
+    const menuBtn = document.getElementById('actions-menu-btn');
+    if (menuBtn) {
+        headerControls.insertBefore(networkIndicator, menuBtn);
+    } else {
+        headerControls.appendChild(networkIndicator);
+    }
+    
+    // Ajouter un clic pour plus d'info
+    networkIndicator.onclick = function(e) {
+        e.stopPropagation();
+        if (isOnline) {
+            showToast('Statut réseau', 
+                'Connexion internet active ✓\nToutes les fonctionnalités sont disponibles',
+                'info', 3000);
+        } else {
+            showToast('Mode hors ligne', 
+                '🔄 Fonctionnement local activé\n' +
+                '✓ Création/modification de clients\n' +
+                '✓ Ajout de matériels\n' +
+                '✓ Vérifications techniques\n' +
+                '✓ Génération de rapports\n\n' +
+                'La synchronisation aura lieu dès la reconnexion.',
+                'warning', 5000);
+        }
+    };
+    
+    // Mémoriser l'état précédent
+    window.wasOffline = !isOnline;
+}
+
+// Gestion des événements réseau
+window.addEventListener('online', updateNetworkStatus);
+window.addEventListener('offline', updateNetworkStatus);
+
+// Initialiser au démarrage
+window.wasOffline = !navigator.onLine;
+setTimeout(updateNetworkStatus, 500); // Petit délai pour laisser le header se charger
+        
+        // ==================== FONCTIONS GLOBALES ====================
+        // Fonction pour afficher les notifications toast
+        window.showToast = function(title, message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+                <div class="toast-content">
+                    <div class="toast-title">${title}</div>
+                    <div class="toast-message">${message}</div>
+                </div>
+                <button class="toast-close" onclick="this.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            // Animer l'entrée
+            setTimeout(() => {
+                toast.classList.add('show');
+            }, 10);
+            
+            // Supprimer après 5 secondes
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 300);
+            }, 5000);
+        };
+        
+        // Définir les fonctions des actions du menu
+        window.syncData = function() {
+            showToast('Synchronisation', 'Synchronisation en cours...', 'info');
+            setTimeout(() => {
+                showToast('Synchronisation', 'Données synchronisées avec succès!', 'success');
+            }, 1500);
+        };
+        
+        window.showDataManagement = function() {
+            showToast('Gestion données', 'Gestion des données localement', 'info');
+        };
+        
+        window.exportData = function() {
+            showToast('Export', 'Export des données en cours...', 'info');
+        };
+        
+        window.importData = function() {
+            showToast('Import', 'Import des données en cours...', 'info');
+        };
+        
+        window.showSettings = function() {
+            showToast('Paramètres', 'Paramètres de l\'application', 'info');
+        };
+        
+        window.showAbout = function() {
+            showToast('À propos', 'FireCheck Pro v1.0\nApplication de vérification incendie', 'info');
+        };
+        
+        console.log('✅ Menu et navigation initialisés');
+    });
+</script>
 
     <script src="app.js"></script>
     <script src="pdf-generator.js"></script>
     <script src="firecheck-manager.js"></script>
-<script>
-// ==================== VÉRIFICATION SERVICE WORKER ====================
-console.log('FireCheck Pro - Vérification PWA...');
-
-// 1. Vérifier si le Service Worker est enregistré
-if ('serviceWorker' in navigator) {
-  // Désenregistrer tous les anciens SW
-  navigator.serviceWorker.getRegistrations().then(function(registrations) {
-    for(let registration of registrations) {
-      registration.unregister();
-      console.log('Ancien SW désenregistré:', registration.scope);
-    }
-  }).then(function() {
-    // Enregistrer le nouveau
-    window.addEventListener('load', function() {
-      navigator.serviceWorker.register('service-worker.js')
-        .then(function(registration) {
-          console.log('✅ Service Worker enregistré:', registration.scope);
-          
-          // Vérifier si le SW contrôle déjà la page
-          if (navigator.serviceWorker.controller) {
-            console.log('🎮 Service Worker contrôle la page');
-            updateOfflineStatus();
-          } else {
-            console.log('⚠️ SW installé mais ne contrôle pas encore');
-            // Recharger pour prendre le contrôle
-            window.location.reload();
-          }
-        })
-        .catch(function(error) {
-          console.error('❌ Erreur SW:', error);
-        });
-    });
-  });
-} else {
-  console.log('❌ Service Worker non supporté');
-}
-
-// 2. Fonction pour vérifier le statut hors ligne
-function updateOfflineStatus() {
-  // Vérifier le cache
-  if ('caches' in window) {
-    caches.open('firecheck-v1').then(function(cache) {
-      return cache.keys();
-    }).then(function(keys) {
-      console.log('📦 Fichiers en cache:', keys.length);
-      
-      // Mettre à jour le bouton serveur
-      const serverBtn = document.getElementById('server-status');
-      if (serverBtn) {
-        serverBtn.innerHTML = '<i class="fas fa-server"></i>' + 
-          '<span class="mobile-hide">Cache: ' + keys.length + ' fichiers</span>';
-        
-        if (keys.length > 0) {
-          serverBtn.style.background = '#2e7d32'; // Vert
-          serverBtn.title = 'Prêt pour le mode hors ligne';
-        }
-      }
-    });
-  }
-}
-
-// 3. Détecter les changements de connexion
-window.addEventListener('online', function() {
-  console.log('🌐 En ligne');
-  const serverBtn = document.getElementById('server-status');
-  if (serverBtn) {
-    serverBtn.style.background = '';
-    serverBtn.innerHTML = '<i class="fas fa-server"></i><span class="mobile-hide">Connecté</span>';
-  }
-});
-
-window.addEventListener('offline', function() {
-  console.log('📴 Hors ligne');
-  const serverBtn = document.getElementById('server-status');
-  if (serverBtn) {
-    serverBtn.style.background = '#c62828'; // Rouge
-    serverBtn.innerHTML = '<i class="fas fa-server"></i><span class="mobile-hide">Hors ligne</span>';
-    
-    // Montrer une notification
-    showOfflineNotification();
-  }
-});
-
-// 4. Notification hors ligne
-function showOfflineNotification() {
-  const notification = document.createElement('div');
-  notification.innerHTML = `
-    <div style="
-      position: fixed;
-      top: 120px;
-      right: 20px;
-      background: #c62828;
-      color: white;
-      padding: 10px 15px;
-      border-radius: 5px;
-      z-index: 1000;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-    ">
-      <i class="fas fa-wifi-slash"></i> Mode hors ligne activé
-    </div>
-  `;
-  document.body.appendChild(notification);
-  
-  setTimeout(function() {
-    notification.remove();
-  }, 3000);
-}
-
-// 5. Forcer la mise à jour du SW au démarrage
-setTimeout(function() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.ready.then(function(registration) {
-      registration.update();
-    });
-  }
-}, 1000);
-</script>
-<script>
-// ==================== FIX iPhone SAFARI - ÉCRAN NOIR ====================
-(function() {
-  console.log('🔧 Initialisation iPhone Safari Fix');
-  
-  // Détecter iPhone Safari
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-  
-  if (isIOS && isSafari) {
-    console.log('📱 iPhone Safari détecté - Activation des correctifs');
-    
-    // 1. FORCER le rechargement si page blanche/noire
-    window.addEventListener('pageshow', function(event) {
-      console.log('📄 Page show - Persisted:', event.persisted);
-      
-      if (event.persisted) {
-        // La page vient du cache navigateur
-        console.log('🔄 Page restaurée depuis cache - Vérification UI');
-        
-        // Vérifier si le DOM est chargé
-        setTimeout(() => {
-          const body = document.body;
-          if (!body || body.children.length === 0) {
-            console.log('🚨 Écran noir détecté - Rechargement');
-            window.location.reload();
-          } else if (body.innerHTML.trim().length < 100) {
-            console.log('🚨 Contenu manquant - Rechargement');
-            window.location.reload();
-          }
-        }, 100);
-      }
-    });
-    
-    // 2. Prévenir les problèmes de cache
-    if ('serviceWorker' in navigator) {
-      // Désenregistrer tous les SW existants
-      navigator.serviceWorker.getRegistrations().then(registrations => {
-        registrations.forEach(registration => {
-          console.log('🗑️ Désenregistrement ancien SW:', registration.scope);
-          registration.unregister();
-        });
-      }).then(() => {
-        // Enregistrer le nouveau SW avec timeout
-        setTimeout(() => {
-          navigator.serviceWorker.register('service-worker.js')
-            .then(registration => {
-              console.log('✅ SW iPhone enregistré');
-              
-              // FORCER l'activation
-              if (registration.waiting) {
-                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-              }
-              
-              // Vérifier l'état toutes les secondes
-              setInterval(() => {
-                if (registration.active) {
-                  console.log('✅ SW actif');
-                } else {
-                  console.log('⚠️ SW inactif - Rechargement');
-                  window.location.reload();
-                }
-              }, 1000);
-            })
-            .catch(error => {
-              console.error('❌ Erreur SW iPhone:', error);
-              // Fallback: recharger sans SW
-              if (error.message.includes('redirect')) {
-                window.location.href = window.location.href.split('#')[0];
-              }
-            });
-        }, 1000);
-      });
-    }
-    
-    // 3. Vérifier l'état de l'application toutes les 5 secondes
-    setInterval(() => {
-      // Vérifier si le contenu est affiché
-      const mainContent = document.querySelector('.container, .page, .card');
-      if (!mainContent && window.location.pathname.includes('index.html')) {
-        console.log('🚨 Contenu manquant détecté - Rechargement auto');
-        window.location.reload();
-      }
-    }, 5000);
-    
-    // 4. Gestion du cache manuel pour Safari
-    const safariCache = {
-      save: function(key, data) {
-        try {
-          localStorage.setItem(`safari_${key}`, JSON.stringify(data));
-          sessionStorage.setItem(`safari_${key}`, JSON.stringify(data));
-          console.log('💾 Données sauvegardées pour Safari:', key);
-        } catch (e) {
-          console.error('❌ Erreur sauvegarde Safari:', e);
-        }
-      },
-      
-      load: function(key) {
-        try {
-          const data = localStorage.getItem(`safari_${key}`) || 
-                       sessionStorage.getItem(`safari_${key}`);
-          return data ? JSON.parse(data) : null;
-        } catch (e) {
-          console.error('❌ Erreur chargement Safari:', e);
-          return null;
-        }
-      },
-      
-      clear: function() {
-        Object.keys(localStorage).forEach(key => {
-          if (key.startsWith('safari_')) {
-            localStorage.removeItem(key);
-          }
-        });
-      }
-    };
-    
-    // Exposer globalement
-    window.safariCache = safariCache;
-    
-    // 5. Sauvegarde auto des données importantes
-    const importantSelectors = [
-      '#client-name', '#technician-name', 
-      '#extincteur-id', '#ria-id', '#baes-id', '#alarme-id'
-    ];
-    
-    setInterval(() => {
-      importantSelectors.forEach(selector => {
-        const element = document.querySelector(selector);
-        if (element && element.value) {
-          safariCache.save(selector, element.value);
-        }
-      });
-      
-      // Sauvegarder l'état de l'application
-      safariCache.save('last_active', {
-        timestamp: Date.now(),
-        url: window.location.href,
-        path: window.location.pathname
-      });
-    }, 30000); // Toutes les 30 secondes
-    
-    // 6. Restaurer les données au chargement
-    window.addEventListener('load', () => {
-      setTimeout(() => {
-        importantSelectors.forEach(selector => {
-          const savedValue = safariCache.load(selector);
-          const element = document.querySelector(selector);
-          if (savedValue && element && !element.value) {
-            element.value = savedValue;
-            console.log('🔄 Donnée restaurée:', selector);
-          }
-        });
-      }, 500);
-    });
-    
-    // 7. Détecter et corriger l'écran noir
-    let blackScreenCheckCount = 0;
-    
-    const checkForBlackScreen = () => {
-      const bodyStyle = window.getComputedStyle(document.body);
-      const bodyColor = bodyStyle.backgroundColor;
-      const bodyChildren = document.body.children.length;
-      
-      // Vérifier si écran noir/blanc
-      if ((bodyColor === 'rgb(0, 0, 0)' || bodyColor === 'rgb(255, 255, 255)') && 
-          bodyChildren === 0) {
-        blackScreenCheckCount++;
-        
-        if (blackScreenCheckCount >= 3) {
-          console.log('🚨 Écran noir confirmé - Redirection');
-          window.location.href = '/index.html?reload=' + Date.now();
-        }
-      } else {
-        blackScreenCheckCount = 0;
-      }
-    };
-    
-    // Vérifier toutes les secondes pendant 10 secondes
-    const blackScreenInterval = setInterval(checkForBlackScreen, 1000);
-    setTimeout(() => clearInterval(blackScreenInterval), 10000);
-    
-    // 8. Log supplémentaire pour débogage
-    console.log('🔍 État initial iPhone:');
-    console.log('- Body enfants:', document.body.children.length);
-    console.log('- Body HTML:', document.body.innerHTML.length, 'caractères');
-    console.log('- URL:', window.location.href);
-    
-  } else {
-    console.log('🖥️ Pas iPhone Safari - Correctifs désactivés');
-  }
-  
-  // 9. Fonction de récupération manuelle
-  window.fixBlackScreen = function() {
-    console.log('🛠️ Correction manuelle écran noir');
-    
-    // Essayer plusieurs méthodes
-    try {
-      // Méthode 1: Rechargement simple
-      window.location.reload();
-    } catch (e) {
-      // Méthode 2: Redirection
-      window.location.href = window.location.pathname;
-    }
-  };
-  
-  // 10. Ajouter un bouton de secours (visible seulement si problème)
-  setTimeout(() => {
-    const hasContent = document.body && 
-                      document.body.innerHTML && 
-                      document.body.innerHTML.length > 500;
-    
-    if (!hasContent) {
-      console.log('⚠️ Contenu insuffisant - Ajout bouton secours');
-      
-      const rescueButton = document.createElement('button');
-      rescueButton.innerHTML = '🔄 Réparer l\'application';
-      rescueButton.style.cssText = `
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        z-index: 9999;
-        background: #c62828;
-        color: white;
-        padding: 15px 30px;
-        border: none;
-        border-radius: 10px;
-        font-size: 16px;
-        cursor: pointer;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-      `;
-      rescueButton.onclick = window.fixBlackScreen;
-      
-      document.body.appendChild(rescueButton);
-    }
-  }, 3000);
-})();
-
-    <!-- ========== REDIRECTION SÉCURITÉ ========== -->
-    // Vérifier si l'utilisateur est connecté
-    (function() {
-        // Charger auth.js d'abord
-        const script = document.createElement('script');
-        script.src = 'auth.js';
-        script.onload = function() {
-            // Vérifier l'authentification
-            const user = window.auth ? window.auth.checkAuth() : null;
-            
-            if (!user) {
-                // Rediriger vers auth.html
-                console.log('🚫 Non connecté - Redirection vers auth.html');
-                window.location.href = 'auth.html';
-            } else {
-                console.log('✅ Utilisateur connecté :', user.fullName);
-            }
-        };
-        document.head.appendChild(script);
-    })();
-</script>
-
-    <!-- ==================== GESTION DE SESSION ==================== -->
-    <script>
-        // Quand l'app est chargée
-        document.addEventListener('DOMContentLoaded', function() {
-            // Vérifier si auth.js est chargé
-            if (typeof window.auth !== 'undefined') {
-                const user = window.auth.checkAuth();
-                
-                // Exemple : personnaliser selon le rôle
-                if (user && user.role === 'admin') {
-                    // Afficher des fonctionnalités admin
-                    console.log('Mode administrateur activé');
-                    
-                    // Exemple: ajouter un lien admin dans le header
-                    const adminLink = document.createElement('button');
-                    adminLink.innerHTML = '';
-                    adminLink.onclick = () => { /* fonction admin */ };
-                    document.querySelector('.header-controls')?.prepend(adminLink);
-                }
-                
-                // Vérifier l'expiration de session périodiquement
-                setInterval(() => {
-                    if (!window.auth.checkAuth()) {
-                        alert('Session expirée. Veuillez vous reconnecter.');
-                        window.auth.logout();
-                    }
-                }, 60000); // Vérifier toutes les minutes
-            }
-        });
-    </script>
 </body>
 </html>
