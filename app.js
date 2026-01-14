@@ -4351,6 +4351,126 @@ if (typeof loadFromStorage === 'undefined') {
     };
 }
 
+// ==================== FONCTIONS D'OUVERTURE DES MODALS ====================
+
+function openAddExtincteurModal() {
+    console.log('Ouverture modal extincteur');
+    const modal = document.getElementById('add-extincteur-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    } else {
+        console.error('Modal extincteur non trouvé');
+    }
+}
+
+function openAddRIAModal() {
+    console.log('Ouverture modal RIA');
+    const modal = document.getElementById('add-ria-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    } else {
+        console.error('Modal RIA non trouvé');
+    }
+}
+
+function openAddBAESModal() {
+    console.log('Ouverture modal BAES');
+    const modal = document.getElementById('add-baes-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    } else {
+        console.error('Modal BAES non trouvé');
+    }
+}
+
+function openAddAlarmeModal() {
+    console.log('Ouverture modal alarme');
+    const modal = document.getElementById('add-alarme-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    } else {
+        console.error('Modal alarme non trouvé');
+    }
+}
+
+// ==================== FONCTIONS DE FERMETURE DES MODALS ====================
+
+function closeExtincteurModal() {
+    const modal = document.getElementById('add-extincteur-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closeRIAModal() {
+    const modal = document.getElementById('add-ria-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closeBAESModal() {
+    const modal = document.getElementById('add-baes-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closeAlarmeModal() {
+    const modal = document.getElementById('add-alarme-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closeInterventionModal() {
+    const modal = document.getElementById('add-intervention-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closePreview() {
+    const modal = document.getElementById('preview-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closeFacture() {
+    const modal = document.getElementById('facture-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closeSuccessModal() {
+    const modal = document.getElementById('success-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function closeErrorModal() {
+    const modal = document.getElementById('error-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
 // Vérifier que localStorage est disponible
 if (typeof localStorage === 'undefined') {
     console.error('❌ localStorage non disponible');
