@@ -2326,13 +2326,9 @@
         <!-- Header Compact -->
         <header class="header">
             <h1><i class="fas fa-fire-extinguisher"></i>FireCheck Pro</h1>
-
             <div class="header-controls">
                 <!-- Bouton principal actions -->
                 <div class="actions-dropdown">
-                    <button class="btn-icon" id="actions-menu-btn" title="Menu">
-                        <i class="fas fa-ellipsis-v"></i>
-                    </button>
                     <div class="actions-menu">
                         <!-- Les actions seront ajoutées dynamiquement -->
                     </div>
@@ -4155,50 +4151,37 @@
 let networkIndicator = null;
 
 function updateNetworkStatus() {
-    const isOnline = navigator.onLine;
+    const headerControls = document.querySelector('.header-controls');
+    const statusElement = document.getElementById('connection-status');
     
-    // Supprimer l'ancien indicateur si existe
-    if (networkIndicator && networkIndicator.parentNode) {
-        networkIndicator.parentNode.removeChild(networkIndicator);
-        networkIndicator = null;
+    if (!headerControls) {
+        console.warn("header-controls non trouvé");
+        return;
     }
     
-    // Trouver le header controls
-    const headerControls = document.querySelector('.header-controls');
-    if (!headerControls) return;
-    
-    // Créer l'indicateur
-    networkIndicator = document.createElement('div');
-    networkIndicator.className = `header-network-indicator ${isOnline ? 'online' : 'offline'}`;
-    networkIndicator.title = isOnline ? 'Connexion active' : 'Mode hors ligne - Travail local';
-    
-    if (isOnline) {
-        networkIndicator.innerHTML = `
-            <i class="fas fa-wifi"></i>
-            <span>En ligne</span>
-        `;
+    // Crée l'élément s'il n'existe pas
+    if (!statusElement) {
+        const newStatusElement = document.createElement('div');
+        newStatusElement.id = 'connection-status';
+        newStatusElement.className = AppState.isOnline ? 'status-indicator online' : 'status-indicator offline';
+        newStatusElement.innerHTML = AppState.isOnline 
+            ? '<i class="fas fa-wifi"></i> En ligne' 
+            : '<i class="fas fa-wifi-slash"></i> Hors ligne';
         
-        // Afficher un toast temporaire si on vient de se reconnecter
-        if (window.wasOffline === true) {
-            showToast('Connexion rétablie', 
-                'La synchronisation est maintenant disponible',
-                'success', 3000);
+        // Ajoute au début de header-controls de manière sécurisée
+        if (headerControls.firstChild) {
+            headerControls.insertBefore(newStatusElement, headerControls.firstChild);
+        } else {
+            headerControls.appendChild(newStatusElement);
         }
     } else {
-        networkIndicator.innerHTML = `
-            <i class="fas fa-wifi-slash"></i>
-            <span>Hors ligne</span>
-        `;
-        
-        // Afficher un toast informatif au premier passage hors ligne
-        if (window.wasOffline !== false) {
-            setTimeout(() => {
-                showToast('Mode hors ligne', 
-                    'L\'application fonctionne en mode local. Vos modifications seront synchronisées automatiquement.',
-                    'warning', 4000);
-            }, 1000);
-        }
+        // Met simplement à jour l'élément existant
+        statusElement.className = AppState.isOnline ? 'status-indicator online' : 'status-indicator offline';
+        statusElement.innerHTML = AppState.isOnline 
+            ? '<i class="fas fa-wifi"></i> En ligne' 
+            : '<i class="fas fa-wifi-slash"></i> Hors ligne';
     }
+}
     
     // Ajouter l'indicateur avant le bouton menu
     const menuBtn = document.getElementById('actions-menu-btn');

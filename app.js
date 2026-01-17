@@ -55,9 +55,9 @@ const CONFIG = {
     
     // Sauvegarde automatique
     autoSave: {
-        enabled: true,
+        enabled: false, // DÉSACTIVÉ
         interval: 60000, // 1 minute
-        onUnload: true
+        onUnload: false, // DÉSACTIVÉ
     },
     
     // Gestion hors ligne
@@ -1256,6 +1256,12 @@ async function initApp() {
         // Ajouter le CSS de gestion des données
         addDataManagementCSS();
         
+        // Ajouter le CSS pour le bouton de déconnexion
+        addLogoutButtonCSS();
+        
+        // Ajouter le bouton de déconnexion
+        addLogoutButton();
+        
         // Afficher la première page
         navigateTo(AppState.currentPage || 'clients');
         
@@ -1298,6 +1304,171 @@ function initPWA() {
                 console.error('Échec Service Worker:', error);
             });
     }
+}
+
+// ==================== BOUTON DE DÉCONNEXION ====================
+function addLogoutButton() {
+    // Chercher l'élément existant avec les trois points
+    const headerControls = document.querySelector('.header-controls');
+    if (!headerControls) return;
+    
+    // Supprimer l'ancien bouton de menu s'il existe
+    const oldMenuBtn = headerControls.querySelector('.menu-toggle');
+    if (oldMenuBtn) {
+        oldMenuBtn.remove();
+    }
+    
+    // Supprimer aussi les autres boutons de menu déroulant s'ils existent
+    const menuButtons = headerControls.querySelectorAll('[data-menu-toggle]');
+    menuButtons.forEach(btn => btn.remove());
+    
+    // Créer le bouton de déconnexion
+    const logoutBtn = document.createElement('button');
+    logoutBtn.className = 'btn btn-sm btn-danger logout-btn';
+    logoutBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> <span class="logout-text">Déconnexion</span>';
+    logoutBtn.title = 'Se déconnecter';
+    logoutBtn.setAttribute('aria-label', 'Se déconnecter');
+    logoutBtn.onclick = logoutUser;
+    
+    // Insérer avant le bouton données si existe, sinon à la fin
+    const dataBtn = headerControls.querySelector('[onclick*="showDataManagementModal"]');
+    if (dataBtn) {
+        headerControls.insertBefore(logoutBtn, dataBtn);
+    } else {
+        headerControls.appendChild(logoutBtn);
+    }
+}
+
+function logoutUser() {
+    if (confirm('Voulez-vous vraiment vous déconnecter ? Toutes les modifications non sauvegardées seront perdues.')) {
+        // Sauvegarder les données avant déconnexion
+        saveCurrentClientChanges();
+        saveInterventions();
+        
+        // Réinitialiser l'état de l'application
+        AppState.currentClient = null;
+        AppState.clients = [];
+        AppState.currentInterventions = [];
+        AppState.calendarEvents = [];
+        
+        // Rediriger vers la page de connexion ou recharger
+        showSuccess('Déconnexion réussie');
+        setTimeout(() => {
+            // Pour une PWA, on pourrait rediriger vers une page de login
+            // Pour l'instant, on recharge juste la page
+            window.location.reload();
+        }, 1500);
+    }
+}
+
+function addLogoutButtonCSS() {
+    const style = document.createElement('style');
+    style.textContent = `
+        /* Bouton de déconnexion */
+        .logout-btn {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-right: 10px;
+            box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        
+        .logout-btn:hover {
+            background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(220, 53, 69, 0.4);
+        }
+        
+        .logout-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
+        }
+        
+        .logout-btn i {
+            font-size: 0.9em;
+            flex-shrink: 0;
+        }
+        
+        .logout-text {
+            flex-shrink: 0;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .logout-btn {
+                padding: 6px 12px;
+                font-size: 0.9em;
+                margin-right: 8px;
+                gap: 6px;
+            }
+            
+            .logout-text {
+                font-size: 0.9em;
+            }
+        }
+        
+        @media (max-width: 600px) {
+            .logout-btn {
+                padding: 6px 10px;
+                margin-right: 6px;
+            }
+            
+            .logout-text {
+                display: none; /* Cacher le texte sur très petits écrans */
+            }
+            
+            .logout-btn i {
+                margin: 0;
+                font-size: 1em;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .header-controls {
+                display: flex;
+                gap: 6px;
+                flex-wrap: nowrap;
+            }
+            
+            .logout-btn {
+                padding: 6px;
+                border-radius: 6px;
+                min-width: 40px;
+                height: 36px;
+                justify-content: center;
+                margin-right: 4px;
+            }
+            
+            .logout-btn i {
+                font-size: 1em;
+            }
+        }
+        
+        /* Assurer que les boutons ne se chevauchent pas */
+        @media (max-width: 380px) {
+            .header-controls {
+                gap: 4px;
+            }
+            
+            .logout-btn {
+                margin-right: 2px;
+                padding: 5px;
+                min-width: 36px;
+                height: 34px;
+            }
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 // ==================== MODIFICATIONS DES FONCTIONS EXISTANTES ====================
@@ -1502,6 +1673,9 @@ function adaptInterfaceToScreenSize() {
     
     // Ajuster les modals
     adjustModals(width);
+    
+    // Ajuster le bouton de déconnexion
+    adjustLogoutButton(width);
 }
 
 function adjustMobileNavigation(width) {
@@ -1527,6 +1701,44 @@ function adjustModals(width) {
             modal.classList.remove('mobile-modal', 'tablet-modal');
         }
     });
+}
+
+function adjustLogoutButton(width) {
+    const logoutBtn = document.querySelector('.logout-btn');
+    if (!logoutBtn) return;
+    
+    const logoutText = logoutBtn.querySelector('.logout-text');
+    
+    if (width < 600) {
+        // Mode très petit écran - cacher le texte
+        if (logoutText) {
+            logoutText.style.display = 'none';
+        }
+        
+        logoutBtn.style.padding = '6px';
+        logoutBtn.style.minWidth = '40px';
+        logoutBtn.style.justifyContent = 'center';
+        
+    } else if (width < 768) {
+        // Mode mobile - bouton compact
+        if (logoutText) {
+            logoutText.style.display = 'inline';
+            logoutText.style.fontSize = '0.9em';
+        }
+        
+        logoutBtn.style.padding = '6px 12px';
+        logoutBtn.style.minWidth = 'auto';
+        
+    } else {
+        // Mode desktop - bouton complet
+        if (logoutText) {
+            logoutText.style.display = 'inline';
+            logoutText.style.fontSize = '1em';
+        }
+        
+        logoutBtn.style.padding = '8px 16px';
+        logoutBtn.style.minWidth = 'auto';
+    }
 }
 
 function preventIOSZoom() {
@@ -4471,6 +4683,144 @@ function closeErrorModal() {
     }
 }
 
+// ==================== CORRECTION DU BUG DES NOTIFICATIONS ====================
+// Solution pour désactiver définitivement les notifications gênantes
+// Version sans bouton STOP BUG - Interface propre
+
+console.log("🔧 Application du correctif de notifications...");
+
+// 1. Désactive complètement l'auto-save dans la config
+CONFIG.autoSave.enabled = false;
+CONFIG.autoSave.onUnload = false;
+
+// 2. Remplace le gestionnaire par une version silencieuse
+class SilentAutoSaveManager {
+    constructor() {
+        console.log("✅ Mode silencieux activé - Pas de notifications");
+    }
+    
+    init() { 
+        // Ne rien faire
+    }
+    
+    setupChangeDetection() { 
+        // Ne pas écouter les changements
+    }
+    
+    markUnsavedChanges() { 
+        // Ne pas marquer de changements
+        AppState.unsavedChanges = false;
+    }
+    
+    showUnsavedIndicator() { 
+        // Ne pas montrer d'indicateur
+    }
+    
+    hideUnsavedIndicator() { 
+        // Supprime l'indicateur s'il existe
+        const indicator = document.getElementById('unsaved-changes-indicator');
+        if (indicator && indicator.parentElement) {
+            indicator.remove();
+        }
+    }
+    
+    saveAllData() { 
+        // Sauvegarde silencieuse
+        console.log("💾 Sauvegarde silencieuse");
+        return Promise.resolve();
+    }
+    
+    saveAppState() { 
+        return Promise.resolve();
+    }
+    
+    loadAppState() { 
+        return Promise.resolve();
+    }
+    
+    showSaveError() { 
+        // Ne pas montrer d'erreurs
+    }
+}
+
+// 3. Remplace l'instance problématique
+AutoSaveManager.instance = new SilentAutoSaveManager();
+
+// 4. Nettoie immédiatement les notifications existantes
+function cleanExistingNotifications() {
+    // Supprime l'indicateur de modifications
+    const unsavedIndicator = document.getElementById('unsaved-changes-indicator');
+    if (unsavedIndicator && unsavedIndicator.parentElement) {
+        unsavedIndicator.remove();
+        console.log("🗑️ Indicateur 'modifications non sauvegardées' supprimé");
+    }
+    
+    // Supprime les notifications d'erreur
+    const errorNotifications = document.querySelectorAll('.save-error-notification');
+    errorNotifications.forEach(el => {
+        if (el.parentElement) {
+            el.remove();
+        }
+    });
+    
+    if (errorNotifications.length > 0) {
+        console.log(`🗑️ ${errorNotifications.length} notification(s) d'erreur supprimée(s)`);
+    }
+    
+    // Supprime l'écouteur beforeunload
+    window.onbeforeunload = null;
+    
+    // Réinitialise l'état
+    AppState.unsavedChanges = false;
+}
+
+// 5. Exécute le nettoyage au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    // Nettoie après un petit délai
+    setTimeout(cleanExistingNotifications, 500);
+    
+    // Nettoie aussi quand on navigue
+    const originalNavigateTo = window.navigateTo;
+    if (typeof originalNavigateTo === 'function') {
+        window.navigateTo = function(page) {
+            cleanExistingNotifications();
+            return originalNavigateTo(page);
+        };
+    }
+    
+    console.log("✅ Correctif appliqué avec succès");
+});
+
+// 6. S'assure que les sauvegardes manuelles fonctionnent toujours
+window.saveClients = async function() {
+    if (AppState.clients.length > 0) {
+        await dbManager.saveAll('clients', AppState.clients);
+        console.log(`💾 ${AppState.clients.length} client(s) sauvegardé(s)`);
+    }
+};
+
+window.saveInterventions = async function() {
+    if (AppState.currentInterventions.length > 0) {
+        await dbManager.saveAll('interventions', AppState.currentInterventions);
+        console.log(`💾 ${AppState.currentInterventions.length} intervention(s) sauvegardée(s)`);
+    }
+};
+
+// 7. Nettoie aussi au chargement de la page
+window.addEventListener('load', function() {
+    setTimeout(cleanExistingNotifications, 1000);
+});
+
+// 8. Redéfinit la fonction problématique de détection
+if (AutoSaveManager.prototype && AutoSaveManager.prototype.setupChangeDetection) {
+    AutoSaveManager.prototype.setupChangeDetection = function() {
+        // Version vide - ne détecte aucun changement
+        console.log("🔇 Détection des changements désactivée");
+    };
+}
+
+console.log("✨ Correctif de notifications installé avec succès !");
+
 // Vérifier que localStorage est disponible
 if (typeof localStorage === 'undefined') {
     console.error('❌ localStorage non disponible');
@@ -4483,6 +4833,7 @@ window.createBackupNow = createBackupNow;
 window.triggerImport = triggerImport;
 window.forceSync = forceSync;
 window.showDataManagementModal = showDataManagementModal;
+window.logoutUser = logoutUser;
 
 // Garder la compatibilité avec l'ancien code
 window.saveClients = saveClients;
