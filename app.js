@@ -1,5 +1,5 @@
-// FireCheck Pro - Application PWA de vérification sécurité incendie APSAD R4
-// Version améliorée avec IndexedDB, gestion hors ligne et sauvegarde automatique
+// FireCheck Pro - Application PWA de vérification sécurité incendie
+// Version optimisée avec jsPDF pour la génération de PDF
 // ==================== CONFIGURATION ====================
 const CONFIG = {
     localStorageKeys: {
@@ -31,7 +31,7 @@ const CONFIG = {
     },
     familyFilters: ['all', 'extincteur', 'ria', 'baes', 'alarme'],
     
-    // Nouvelles configurations
+    // Configurations IndexedDB
     indexedDB: {
         name: 'FireCheckProDB',
         version: 3,
@@ -53,11 +53,11 @@ const CONFIG = {
         retryDelay: 5000
     },
     
-    // Sauvegarde automatique
+    // Sauvegarde automatique (DÉSACTIVÉE)
     autoSave: {
-        enabled: false, // DÉSACTIVÉ
-        interval: 60000, // 1 minute
-        onUnload: false, // DÉSACTIVÉ
+        enabled: false,
+        interval: 60000,
+        onUnload: false
     },
     
     // Gestion hors ligne
@@ -127,29 +127,28 @@ class DatabaseManager {
             
             request.onerror = (event) => {
                 console.error('Erreur IndexedDB:', event.target.error);
-                reject(event.target.error);
+                this.db = { isIndexedDB: false };
+                resolve(this.db);
             };
             
             request.onsuccess = (event) => {
                 this.db = event.target.result;
                 console.log('IndexedDB initialisé');
                 
-                // Vérifier et migrer les données depuis localStorage
+                // Migrer les données depuis localStorage
                 this.migrateFromLocalStorage().then(() => {
                     resolve(this.db);
-                });
+                }).catch(() => resolve(this.db));
             };
             
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
                 const stores = CONFIG.indexedDB.stores;
                 
-                // Créer tous les stores s'ils n'existent pas
                 Object.values(stores).forEach(storeName => {
                     if (!db.objectStoreNames.contains(storeName)) {
                         const store = db.createObjectStore(storeName, { keyPath: 'id' });
                         
-                        // Créer des index pour les recherches
                         switch(storeName) {
                             case 'clients':
                                 store.createIndex('name', 'name', { unique: false });
@@ -189,25 +188,23 @@ class DatabaseManager {
             for (const key of localStorageKeys) {
                 const data = localStorage.getItem(key);
                 if (data) {
-                    const parsedData = JSON.parse(data);
-                    const storeName = this.getStoreNameFromKey(key);
-                    
-                    if (storeName) {
-                        await this.saveAll(storeName, Array.isArray(parsedData) ? parsedData : [parsedData]);
-                        console.log(`Migré ${parsedData.length || 1} éléments depuis localStorage vers ${storeName}`);
+                    try {
+                        const parsedData = JSON.parse(data);
+                        const storeName = this.getStoreNameFromKey(key);
+                        
+                        if (storeName && parsedData) {
+                            const items = Array.isArray(parsedData) ? parsedData : [parsedData];
+                            if (items.length > 0) {
+                                await this.saveAll(storeName, items);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`Erreur parsing ${key}:`, e);
                     }
                 }
             }
-            
-            // Marquer la migration comme terminée
-            await this.save('settings', {
-                id: 'migration',
-                completed: true,
-                date: new Date().toISOString()
-            });
-            
         } catch (error) {
-            console.error('Erreur migration localStorage:', error);
+            console.warn('Erreur migration:', error);
         }
     }
     
@@ -216,197 +213,419 @@ class DatabaseManager {
             'firecheck_clients': 'clients',
             'firecheck_interventions': 'interventions',
             'firecheck_factures': 'factures',
-            'calendarEvents': 'interventions' // Les événements du calendrier sont des interventions
+            'calendarEvents': 'interventions'
         };
         return mapping[key];
     }
     
     async save(storeName, data) {
-        if (!this.db || !this.db.isIndexedDB) {
-            // Fallback vers localStorage
-            return this.saveToLocalStorage(storeName, data);
+        try {
+            if (!data || !data.id) {
+                console.error('Données invalides pour sauvegarde:', data);
+                return;
+            }
+            
+            if (this.db && this.db.isIndexedDB !== false) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        const transaction = this.db.transaction([storeName], 'readwrite');
+                        const store = transaction.objectStore(storeName);
+                        const request = store.put(data);
+                        
+                        request.onsuccess = () => {
+                            this.saveToLocalStorage(storeName, data);
+                            resolve();
+                        };
+                        
+                        request.onerror = (event) => {
+                            console.warn(`Erreur IndexedDB ${storeName}:`, event.target.error);
+                            this.saveToLocalStorage(storeName, data);
+                            resolve();
+                        };
+                    } catch (e) {
+                        this.saveToLocalStorage(storeName, data);
+                        resolve();
+                    }
+                });
+            } else {
+                this.saveToLocalStorage(storeName, data);
+                return Promise.resolve();
+            }
+        } catch (error) {
+            console.error(`Erreur sauvegarde ${storeName}:`, error);
+            this.saveToLocalStorage(storeName, data);
+            return Promise.resolve();
         }
-        
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([storeName], 'readwrite');
-            const store = transaction.objectStore(storeName);
-            
-            const request = store.put(data);
-            
-            request.onsuccess = () => {
-                // Sauvegarde double dans localStorage pour sécurité
-                this.saveToLocalStorage(storeName, data);
-                resolve();
-            };
-            
-            request.onerror = (event) => {
-                console.error(`Erreur sauvegarde ${storeName}:`, event.target.error);
-                // Fallback vers localStorage
-                this.saveToLocalStorage(storeName, data);
-                resolve();
-            };
-        });
     }
     
     async saveAll(storeName, items) {
-        if (!this.db || !this.db.isIndexedDB) {
-            return this.saveAllToLocalStorage(storeName, items);
+        try {
+            if (!Array.isArray(items)) {
+                console.error('Items doit être un tableau:', items);
+                return;
+            }
+            
+            const validItems = items.filter(item => item && item.id);
+            
+            if (validItems.length === 0) return;
+            
+            if (this.db && this.db.isIndexedDB !== false) {
+                return new Promise((resolve) => {
+                    try {
+                        const transaction = this.db.transaction([storeName], 'readwrite');
+                        const store = transaction.objectStore(storeName);
+                        
+                        validItems.forEach(item => {
+                            store.put(item);
+                        });
+                        
+                        transaction.oncomplete = () => {
+                            this.saveAllToLocalStorage(storeName, validItems);
+                            resolve();
+                        };
+                        
+                        transaction.onerror = () => {
+                            this.saveAllToLocalStorage(storeName, validItems);
+                            resolve();
+                        };
+                    } catch (e) {
+                        this.saveAllToLocalStorage(storeName, validItems);
+                        resolve();
+                    }
+                });
+            } else {
+                this.saveAllToLocalStorage(storeName, validItems);
+                return Promise.resolve();
+            }
+        } catch (error) {
+            console.error(`Erreur saveAll ${storeName}:`, error);
+            this.saveAllToLocalStorage(storeName, items.filter(i => i && i.id));
+            return Promise.resolve();
         }
-        
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([storeName], 'readwrite');
-            const store = transaction.objectStore(storeName);
-            
-            items.forEach(item => {
-                store.put(item);
-            });
-            
-            transaction.oncomplete = () => {
-                // Sauvegarde double
-                this.saveAllToLocalStorage(storeName, items);
-                resolve();
-            };
-            
-            transaction.onerror = (event) => {
-                console.error(`Erreur sauvegarde multiple ${storeName}:`, event.target.error);
-                this.saveAllToLocalStorage(storeName, items);
-                resolve();
-            };
-        });
     }
     
     async get(storeName, id) {
-        if (!this.db || !this.db.isIndexedDB) {
+        try {
+            if (this.db && this.db.isIndexedDB !== false) {
+                return new Promise((resolve) => {
+                    try {
+                        const transaction = this.db.transaction([storeName], 'readonly');
+                        const store = transaction.objectStore(storeName);
+                        const request = store.get(id);
+                        
+                        request.onsuccess = (event) => {
+                            resolve(event.target.result || null);
+                        };
+                        
+                        request.onerror = () => {
+                            resolve(this.getFromLocalStorage(storeName, id));
+                        };
+                    } catch (e) {
+                        resolve(this.getFromLocalStorage(storeName, id));
+                    }
+                });
+            } else {
+                return this.getFromLocalStorage(storeName, id);
+            }
+        } catch (error) {
+            console.error(`Erreur get ${storeName}:`, error);
             return this.getFromLocalStorage(storeName, id);
         }
-        
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([storeName], 'readonly');
-            const store = transaction.objectStore(storeName);
-            
-            const request = store.get(id);
-            
-            request.onsuccess = (event) => {
-                resolve(event.target.result);
-            };
-            
-            request.onerror = (event) => {
-                console.error(`Erreur récupération ${storeName}:`, event.target.error);
-                this.getFromLocalStorage(storeName, id).then(resolve);
-            };
-        });
     }
     
     async getAll(storeName, indexName = null, indexValue = null) {
-        if (!this.db || !this.db.isIndexedDB) {
+        try {
+            if (this.db && this.db.isIndexedDB !== false) {
+                return new Promise((resolve) => {
+                    try {
+                        const transaction = this.db.transaction([storeName], 'readonly');
+                        const store = transaction.objectStore(storeName);
+                        
+                        let request;
+                        if (indexName && indexValue !== null) {
+                            const index = store.index(indexName);
+                            request = index.getAll(indexValue);
+                        } else {
+                            request = store.getAll();
+                        }
+                        
+                        request.onsuccess = (event) => {
+                            resolve(event.target.result || []);
+                        };
+                        
+                        request.onerror = () => {
+                            resolve(this.getAllFromLocalStorage(storeName));
+                        };
+                    } catch (e) {
+                        resolve(this.getAllFromLocalStorage(storeName));
+                    }
+                });
+            } else {
+                return this.getAllFromLocalStorage(storeName);
+            }
+        } catch (error) {
+            console.error(`Erreur getAll ${storeName}:`, error);
             return this.getAllFromLocalStorage(storeName);
         }
-        
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([storeName], 'readonly');
-            const store = transaction.objectStore(storeName);
-            
-            let request;
-            if (indexName && indexValue !== null) {
-                const index = store.index(indexName);
-                request = index.getAll(indexValue);
-            } else {
-                request = store.getAll();
-            }
-            
-            request.onsuccess = (event) => {
-                resolve(event.target.result || []);
-            };
-            
-            request.onerror = (event) => {
-                console.error(`Erreur récupération multiple ${storeName}:`, event.target.error);
-                this.getAllFromLocalStorage(storeName).then(resolve);
-            };
-        });
     }
     
     async delete(storeName, id) {
-        if (!this.db || !this.db.isIndexedDB) {
-            return this.deleteFromLocalStorage(storeName, id);
+        try {
+            if (this.db && this.db.isIndexedDB !== false) {
+                return new Promise((resolve) => {
+                    try {
+                        const transaction = this.db.transaction([storeName], 'readwrite');
+                        const store = transaction.objectStore(storeName);
+                        const request = store.delete(id);
+                        
+                        request.onsuccess = () => {
+                            this.deleteFromLocalStorage(storeName, id);
+                            resolve();
+                        };
+                        
+                        request.onerror = () => {
+                            this.deleteFromLocalStorage(storeName, id);
+                            resolve();
+                        };
+                    } catch (e) {
+                        this.deleteFromLocalStorage(storeName, id);
+                        resolve();
+                    }
+                });
+            } else {
+                this.deleteFromLocalStorage(storeName, id);
+                return Promise.resolve();
+            }
+        } catch (error) {
+            console.error(`Erreur delete ${storeName}:`, error);
+            this.deleteFromLocalStorage(storeName, id);
+            return Promise.resolve();
         }
-        
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([storeName], 'readwrite');
-            const store = transaction.objectStore(storeName);
-            
-            const request = store.delete(id);
-            
-            request.onsuccess = () => {
-                this.deleteFromLocalStorage(storeName, id);
-                resolve();
-            };
-            
-            request.onerror = (event) => {
-                console.error(`Erreur suppression ${storeName}:`, event.target.error);
-                this.deleteFromLocalStorage(storeName, id);
-                resolve();
-            };
-        });
     }
     
-    // Méthodes localStorage (fallback)
-    saveToLocalStorage(storeName, data) {
-        const key = this.getLocalStorageKey(storeName);
-        const existing = this.getAllFromLocalStorage(storeName);
-        const index = existing.findIndex(item => item.id === data.id);
-        
-        if (index !== -1) {
-            existing[index] = data;
-        } else {
-            existing.push(data);
+    // ==================== GESTION DU STORAGE ====================
+    
+    cleanupLocalStorage() {
+        try {
+            console.log('🧹 Nettoyage du localStorage...');
+            
+            const essentialKeys = [
+                'user_session',
+                'current_client',
+                'materials_to_verify',
+                'verification_data'
+            ];
+            
+            const keysToClean = [];
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                
+                if (!essentialKeys.includes(key)) {
+                    if (key.includes('syncQueue') || key.includes('history_old') || key.includes('temp_')) {
+                        keysToClean.push(key);
+                    }
+                }
+            }
+            
+            keysToClean.forEach(key => {
+                localStorage.removeItem(key);
+                console.log(`🗑️ Supprimé: ${key}`);
+            });
+            
+            console.log(`✅ Nettoyage terminé. ${keysToClean.length} éléments supprimés.`);
+            return true;
+        } catch (error) {
+            console.error('❌ Erreur lors du nettoyage:', error);
+            return false;
         }
-        
-        localStorage.setItem(key, JSON.stringify(existing));
+    }
+    
+    saveToLocalStorage(storeName, data) {
+        try {
+            const dataSize = new Blob([JSON.stringify(data)]).size;
+            const currentUsage = this.getLocalStorageUsage();
+            
+            if (currentUsage + dataSize > 4.5 * 1024 * 1024) {
+                console.warn('⚠️ Quota localStorage approchant - Nettoyage en cours...');
+                this.cleanupLocalStorage();
+            }
+            
+            const key = this.getLocalStorageKey(storeName);
+            const existing = this.getAllFromLocalStorage(storeName);
+            const index = existing.findIndex(item => item.id === data.id);
+            
+            if (index !== -1) {
+                existing[index] = data;
+            } else {
+                existing.push(data);
+            }
+            
+            localStorage.setItem(key, JSON.stringify(existing));
+            return true;
+        } catch (error) {
+            console.error(`❌ Erreur saveToLocalStorage ${storeName}:`, error);
+            
+            if (error.name === 'QuotaExceededError') {
+                console.log('🔄 Tentative de récupération après erreur de quota...');
+                this.cleanupLocalStorage();
+                
+                try {
+                    const key = this.getLocalStorageKey(storeName);
+                    const existing = this.getAllFromLocalStorage(storeName);
+                    const index = existing.findIndex(item => item.id === data.id);
+                    
+                    if (index !== -1) {
+                        existing[index] = data;
+                    } else {
+                        existing.push(data);
+                    }
+                    
+                    localStorage.setItem(key, JSON.stringify(existing));
+                    console.log(`✅ Données sauvegardées après nettoyage: ${storeName}`);
+                    return true;
+                } catch (retryError) {
+                    console.error(`❌ Échec après nettoyage:`, retryError);
+                    this.saveEssentialDataOnly(storeName, data);
+                    return false;
+                }
+            }
+            return false;
+        }
+    }
+    
+    saveEssentialDataOnly(storeName, data) {
+        try {
+            const key = this.getLocalStorageKey(storeName);
+            
+            if (storeName === 'syncQueue' && Array.isArray(data) && data.length > 50) {
+                const essentialData = data.slice(-50);
+                localStorage.setItem(key, JSON.stringify(essentialData));
+                console.log(`⚠️ Sauvegarde réduite: ${storeName} (${essentialData.length} éléments au lieu de ${data.length})`);
+                return true;
+            }
+            
+            const compressedData = this.compressData(data);
+            localStorage.setItem(key, JSON.stringify(compressedData));
+            console.log(`⚠️ Données compressées: ${storeName}`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Impossible de sauvegarder même les données essentielles:`, error);
+            return false;
+        }
+    }
+    
+    compressData(data) {
+        if (Array.isArray(data)) {
+            return data.map(item => {
+                if (typeof item === 'object') {
+                    const { id, type, status, timestamp, ...rest } = item;
+                    return { id, type, status, timestamp };
+                }
+                return item;
+            });
+        }
+        return data;
+    }
+    
+    getLocalStorageUsage() {
+        let total = 0;
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            const value = localStorage.getItem(key);
+            total += key.length + value.length;
+        }
+        return total * 2;
     }
     
     saveAllToLocalStorage(storeName, items) {
-        const key = this.getLocalStorageKey(storeName);
-        localStorage.setItem(key, JSON.stringify(items));
+        try {
+            const key = this.getLocalStorageKey(storeName);
+            
+            const dataSize = new Blob([JSON.stringify(items)]).size;
+            const currentUsage = this.getLocalStorageUsage();
+            
+            if (currentUsage + dataSize > 4.5 * 1024 * 1024) {
+                this.cleanupLocalStorage();
+            }
+            
+            localStorage.setItem(key, JSON.stringify(items));
+            return true;
+        } catch (error) {
+            console.error(`Erreur saveAllToLocalStorage ${storeName}:`, error);
+            
+            if (error.name === 'QuotaExceededError') {
+                this.cleanupLocalStorage();
+                try {
+                    const key = this.getLocalStorageKey(storeName);
+                    localStorage.setItem(key, JSON.stringify(items));
+                    return true;
+                } catch (retryError) {
+                    console.error('Échec après nettoyage:', retryError);
+                    return false;
+                }
+            }
+            return false;
+        }
     }
     
     getFromLocalStorage(storeName, id) {
-        const items = this.getAllFromLocalStorage(storeName);
-        return items.find(item => item.id === id);
+        try {
+            const items = this.getAllFromLocalStorage(storeName);
+            return items.find(item => item && item.id === id) || null;
+        } catch (error) {
+            console.error(`Erreur getFromLocalStorage ${storeName}:`, error);
+            return null;
+        }
     }
     
     getAllFromLocalStorage(storeName) {
-        const key = this.getLocalStorageKey(storeName);
-        const data = localStorage.getItem(key);
-        return data ? JSON.parse(data) : [];
+        try {
+            const key = this.getLocalStorageKey(storeName);
+            const data = localStorage.getItem(key);
+            return data ? JSON.parse(data) : [];
+        } catch (error) {
+            console.error(`Erreur getAllFromLocalStorage ${storeName}:`, error);
+            return [];
+        }
     }
     
     deleteFromLocalStorage(storeName, id) {
-        const items = this.getAllFromLocalStorage(storeName);
-        const filtered = items.filter(item => item.id !== id);
-        const key = this.getLocalStorageKey(storeName);
-        localStorage.setItem(key, JSON.stringify(filtered));
+        try {
+            const items = this.getAllFromLocalStorage(storeName);
+            const filtered = items.filter(item => item && item.id !== id);
+            const key = this.getLocalStorageKey(storeName);
+            localStorage.setItem(key, JSON.stringify(filtered));
+        } catch (error) {
+            console.error(`Erreur deleteFromLocalStorage ${storeName}:`, error);
+        }
     }
     
     getLocalStorageKey(storeName) {
         return `firecheck_${storeName}`;
     }
     
-    // Méthodes utilitaires
     async clearStore(storeName) {
-        if (!this.db || !this.db.isIndexedDB) {
+        try {
             const key = this.getLocalStorageKey(storeName);
             localStorage.removeItem(key);
-            return;
-        }
-        
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([storeName], 'readwrite');
-            const store = transaction.objectStore(storeName);
-            const request = store.clear();
             
-            request.onsuccess = () => resolve();
-            request.onerror = (event) => reject(event.target.error);
-        });
+            if (this.db && this.db.isIndexedDB !== false) {
+                return new Promise((resolve) => {
+                    try {
+                        const transaction = this.db.transaction([storeName], 'readwrite');
+                        const store = transaction.objectStore(storeName);
+                        store.clear();
+                        transaction.oncomplete = () => resolve();
+                        transaction.onerror = () => resolve();
+                    } catch (e) {
+                        resolve();
+                    }
+                });
+            }
+        } catch (error) {
+            console.error(`Erreur clearStore ${storeName}:`, error);
+        }
     }
     
     async getStats() {
@@ -422,812 +641,7 @@ class DatabaseManager {
     }
 }
 
-// Instance globale de DatabaseManager
 const dbManager = new DatabaseManager();
-
-// ==================== GESTION HORS LIGNE ====================
-class OfflineManager {
-    constructor() {
-        this.syncQueue = [];
-        this.retryCount = 0;
-        this.init();
-    }
-    
-    init() {
-        // Détecter les changements de connexion
-        window.addEventListener('online', () => this.handleOnline());
-        window.addEventListener('offline', () => this.handleOffline());
-        
-        // Initialiser l'état
-        AppState.isOnline = navigator.onLine;
-        AppState.offlineMode = !navigator.onLine;
-        
-        // Charger la file de synchronisation
-        this.loadSyncQueue();
-        
-        // Démarrer le worker de synchronisation
-        if (CONFIG.sync.enabled) {
-            this.startSyncWorker();
-        }
-    }
-    
-    async handleOnline() {
-        console.log('🟢 Connexion rétablie');
-        AppState.isOnline = true;
-        AppState.offlineMode = false;
-        
-        // Mettre à jour l'interface
-        this.updateOnlineStatus();
-        
-        // Synchroniser si configuré
-        if (CONFIG.offline.syncOnReconnect) {
-            await this.syncAll();
-        }
-        
-        // Nettoyer le cache si nécessaire
-        this.cleanOldCache();
-    }
-    
-    async handleOffline() {
-        console.log('🔴 Hors ligne');
-        AppState.isOnline = false;
-        AppState.offlineMode = true;
-        
-        // Mettre à jour l'interface
-        this.updateOnlineStatus();
-        
-        // Activer le mode hors ligne
-        this.enableOfflineMode();
-    }
-    
-    updateOnlineStatus() {
-        const statusElement = document.getElementById('connection-status');
-        if (!statusElement) return;
-        
-        if (AppState.isOnline) {
-            statusElement.innerHTML = '<i class="fas fa-wifi"></i> En ligne';
-            statusElement.className = 'status-indicator online';
-        } else {
-            statusElement.innerHTML = '<i class="fas fa-wifi-slash"></i> Hors ligne';
-            statusElement.className = 'status-indicator offline';
-            
-            // Afficher une notification
-            this.showOfflineNotification();
-        }
-    }
-    
-    showOfflineNotification() {
-        if (!AppState.offlineMode) return;
-        
-        const notification = document.createElement('div');
-        notification.className = 'offline-notification';
-        notification.innerHTML = `
-            <div class="offline-content">
-                <i class="fas fa-wifi-slash"></i>
-                <span>Mode hors ligne activé - Les modifications seront synchronisées lorsque la connexion sera rétablie</span>
-                <button onclick="this.parentElement.parentElement.remove()">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-        `;
-        
-        document.body.appendChild(notification);
-        
-        // Retirer automatiquement après 5 secondes
-        setTimeout(() => {
-            if (notification.parentElement) {
-                notification.remove();
-            }
-        }, 5000);
-    }
-    
-    enableOfflineMode() {
-        // Précharger les données nécessaires
-        this.precacheOfflineData();
-        
-        // Désactiver les fonctionnalités nécessitant une connexion
-        this.disableOnlineFeatures();
-        
-        // Afficher un indicateur dans l'interface
-        document.body.classList.add('offline-mode');
-    }
-    
-    disableOfflineMode() {
-        document.body.classList.remove('offline-mode');
-        this.enableOnlineFeatures();
-    }
-    
-    async precacheOfflineData() {
-        const pagesToCache = CONFIG.offline.cachePages;
-        
-        for (const page of pagesToCache) {
-            try {
-                await this.cachePageData(page);
-            } catch (error) {
-                console.error(`Erreur cache page ${page}:`, error);
-            }
-        }
-    }
-    
-    async cachePageData(page) {
-        // Cache spécifique selon la page
-        switch(page) {
-            case 'clients':
-                AppState.clients = await dbManager.getAll('clients');
-                break;
-            case 'materials':
-                // Les matériels sont chargés avec les clients
-                break;
-            case 'verification':
-                // Précharger les données de vérification
-                break;
-        }
-        
-        // Sauvegarder dans le cache du navigateur
-        const cacheKey = `firecheck_cache_${page}`;
-        const data = {
-            timestamp: new Date().toISOString(),
-            data: AppState[page] || []
-        };
-        
-        localStorage.setItem(cacheKey, JSON.stringify(data));
-    }
-    
-    disableOnlineFeatures() {
-        // Désactiver les boutons nécessitant une connexion
-        const onlineButtons = document.querySelectorAll('[data-requires-online]');
-        onlineButtons.forEach(button => {
-            button.disabled = true;
-            button.title = 'Fonctionnalité disponible uniquement en ligne';
-        });
-    }
-    
-    enableOnlineFeatures() {
-        const onlineButtons = document.querySelectorAll('[data-requires-online]');
-        onlineButtons.forEach(button => {
-            button.disabled = false;
-            button.title = '';
-        });
-    }
-    
-    async loadSyncQueue() {
-        this.syncQueue = await dbManager.getAll('syncQueue', 'status', 'pending');
-        console.log(`File de synchronisation chargée: ${this.syncQueue.length} éléments en attente`);
-    }
-    
-    async addToSyncQueue(action, data) {
-        const syncItem = {
-            id: `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            action: action,
-            data: data,
-            status: 'pending',
-            timestamp: new Date().toISOString(),
-            retryCount: 0
-        };
-        
-        await dbManager.save('syncQueue', syncItem);
-        this.syncQueue.push(syncItem);
-        
-        // Tenter une synchronisation immédiate si en ligne
-        if (AppState.isOnline) {
-            this.processSyncQueue();
-        }
-        
-        return syncItem.id;
-    }
-    
-    async processSyncQueue() {
-        if (!AppState.isOnline || this.syncQueue.length === 0) {
-            return;
-        }
-        
-        console.log(`Traitement de la file de synchronisation: ${this.syncQueue.length} éléments`);
-        
-        for (const item of this.syncQueue.filter(i => i.status === 'pending')) {
-            try {
-                await this.processSyncItem(item);
-                item.status = 'completed';
-                await dbManager.save('syncQueue', item);
-                
-            } catch (error) {
-                console.error(`Erreur synchronisation ${item.id}:`, error);
-                item.retryCount++;
-                
-                if (item.retryCount >= CONFIG.sync.retryAttempts) {
-                    item.status = 'failed';
-                    item.error = error.message;
-                }
-                
-                await dbManager.save('syncQueue', item);
-            }
-        }
-        
-        // Filtrer les éléments complétés
-        this.syncQueue = this.syncQueue.filter(item => item.status === 'pending');
-    }
-    
-    async processSyncItem(item) {
-        // Implémentation de la synchronisation avec le serveur
-        // À adapter selon votre backend
-        
-        switch(item.action) {
-            case 'saveClient':
-                // await api.saveClient(item.data);
-                break;
-            case 'saveMaterial':
-                // await api.saveMaterial(item.data);
-                break;
-            case 'saveIntervention':
-                // await api.saveIntervention(item.data);
-                break;
-        }
-        
-        // Simuler un délai
-        await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    
-    startSyncWorker() {
-        setInterval(() => {
-            if (AppState.isOnline && this.syncQueue.length > 0) {
-                this.processSyncQueue();
-            }
-        }, CONFIG.sync.interval);
-    }
-    
-    async syncAll() {
-        console.log('Synchronisation complète démarrée');
-        
-        // Synchroniser les clients
-        const clients = await dbManager.getAll('clients');
-        for (const client of clients) {
-            await this.addToSyncQueue('saveClient', client);
-        }
-        
-        // Synchroniser les matériels
-        const materials = await dbManager.getAll('materials');
-        for (const material of materials) {
-            await this.addToSyncQueue('saveMaterial', material);
-        }
-        
-        // Synchroniser les interventions
-        const interventions = await dbManager.getAll('interventions');
-        for (const intervention of interventions) {
-            await this.addToSyncQueue('saveIntervention', intervention);
-        }
-        
-        console.log('Synchronisation complète terminée');
-    }
-    
-    cleanOldCache() {
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - CONFIG.offline.maxRetentionDays);
-        
-        // Nettoyer le cache localStorage
-        Object.keys(localStorage).forEach(key => {
-            if (key.startsWith('firecheck_cache_')) {
-                try {
-                    const data = JSON.parse(localStorage.getItem(key));
-                    if (data && new Date(data.timestamp) < cutoffDate) {
-                        localStorage.removeItem(key);
-                    }
-                } catch (error) {
-                    // Ignorer les erreurs de parsing
-                }
-            }
-        });
-    }
-}
-
-// ==================== SAUVEGARDE AUTOMATIQUE ====================
-class AutoSaveManager {
-    constructor() {
-        this.saveTimeout = null;
-        this.lastSave = null;
-        this.init();
-    }
-    
-    init() {
-        if (!CONFIG.autoSave.enabled) return;
-        
-        // Sauvegarde périodique
-        setInterval(() => {
-            if (AppState.unsavedChanges) {
-                this.saveAllData();
-            }
-        }, CONFIG.autoSave.interval);
-        
-        // Sauvegarde avant déchargement
-        if (CONFIG.autoSave.onUnload) {
-            window.addEventListener('beforeunload', (event) => {
-                if (AppState.unsavedChanges) {
-                    this.saveAllData();
-                    event.preventDefault();
-                    event.returnValue = 'Vous avez des modifications non sauvegardées.';
-                }
-            });
-        }
-        
-        // Sauvegarde sur changement de page
-        const originalNavigateTo = window.navigateTo;
-        window.navigateTo = function(page) {
-            if (AppState.unsavedChanges) {
-                AutoSaveManager.instance.saveAllData();
-            }
-            return originalNavigateTo(page);
-        };
-        
-        // Détecter les modifications
-        this.setupChangeDetection();
-    }
-    
-    setupChangeDetection() {
-        // Observer les modifications dans les formulaires
-        const forms = document.querySelectorAll('form, input, textarea, select');
-        forms.forEach(element => {
-            element.addEventListener('change', () => {
-                this.markUnsavedChanges();
-            });
-            element.addEventListener('input', () => {
-                this.markUnsavedChanges();
-            });
-        });
-        
-        // Observer les boutons de sauvegarde
-        const saveButtons = document.querySelectorAll('[data-action="save"]');
-        saveButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                this.saveAllData();
-            });
-        });
-    }
-    
-    markUnsavedChanges() {
-        if (!AppState.unsavedChanges) {
-            AppState.unsavedChanges = true;
-            this.showUnsavedIndicator();
-        }
-        
-        // Débouncer la sauvegarde automatique
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout);
-        }
-        
-        this.saveTimeout = setTimeout(() => {
-            if (AppState.unsavedChanges) {
-                this.saveAllData();
-            }
-        }, 10000); // Sauvegarde après 10 secondes d'inactivité
-    }
-    
-    showUnsavedIndicator() {
-        let indicator = document.getElementById('unsaved-changes-indicator');
-        
-        if (!indicator) {
-            indicator = document.createElement('div');
-            indicator.id = 'unsaved-changes-indicator';
-            indicator.className = 'unsaved-indicator';
-            indicator.innerHTML = `
-                <i class="fas fa-save"></i>
-                <span>Modifications non sauvegardées</span>
-                <button onclick="AutoSaveManager.instance.saveAllData()">
-                    <i class="fas fa-save"></i> Sauvegarder
-                </button>
-            `;
-            document.body.appendChild(indicator);
-        }
-        
-        indicator.classList.add('visible');
-    }
-    
-    hideUnsavedIndicator() {
-        const indicator = document.getElementById('unsaved-changes-indicator');
-        if (indicator) {
-            indicator.classList.remove('visible');
-            setTimeout(() => {
-                if (indicator.parentElement && !indicator.classList.contains('visible')) {
-                    indicator.remove();
-                }
-            }, 300);
-        }
-    }
-    
-    async saveAllData() {
-        if (!AppState.unsavedChanges) return;
-        
-        console.log('Sauvegarde automatique...');
-        
-        try {
-            // Sauvegarder les clients
-            if (AppState.clients.length > 0) {
-                await dbManager.saveAll('clients', AppState.clients);
-            }
-            
-            // Sauvegarder les interventions
-            if (AppState.currentInterventions.length > 0) {
-                await dbManager.saveAll('interventions', AppState.currentInterventions);
-            }
-            
-            // Sauvegarder l'état de l'application
-            await this.saveAppState();
-            
-            // Marquer comme sauvegardé
-            AppState.unsavedChanges = false;
-            AppState.lastSaveTime = new Date();
-            
-            // Cacher l'indicateur
-            this.hideUnsavedIndicator();
-            
-            // Ajouter à la file de synchronisation
-            if (AppState.isOnline) {
-                const offlineManager = new OfflineManager();
-                await offlineManager.addToSyncQueue('saveAll', {
-                    clients: AppState.clients,
-                    interventions: AppState.currentInterventions,
-                    timestamp: new Date().toISOString()
-                });
-            }
-            
-            console.log('✅ Sauvegarde automatique terminée');
-            
-        } catch (error) {
-            console.error('❌ Erreur sauvegarde automatique:', error);
-            this.showSaveError(error);
-        }
-    }
-    
-    async saveAppState() {
-        const appState = {
-            id: 'app_state',
-            currentClient: AppState.currentClient,
-            currentPage: AppState.currentPage,
-            currentFamilyFilter: AppState.currentFamilyFilter,
-            factureNumero: AppState.factureNumero,
-            lastSave: new Date().toISOString(),
-            version: '1.0'
-        };
-        
-        await dbManager.save('settings', appState);
-    }
-    
-    async loadAppState() {
-        const savedState = await dbManager.get('settings', 'app_state');
-        
-        if (savedState) {
-            AppState.currentPage = savedState.currentPage || 'clients';
-            AppState.currentFamilyFilter = savedState.currentFamilyFilter || ['all'];
-            AppState.factureNumero = savedState.factureNumero || '';
-            AppState.lastSaveTime = new Date(savedState.lastSave);
-            
-            // Restaurer la page courante
-            if (savedState.currentPage) {
-                navigateTo(savedState.currentPage);
-            }
-            
-            // Restaurer le client courant si possible
-            if (savedState.currentClient) {
-                const client = await dbManager.get('clients', savedState.currentClient.id);
-                if (client) {
-                    AppState.currentClient = client;
-                }
-            }
-        }
-    }
-    
-    showSaveError(error) {
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'save-error-notification';
-        errorDiv.innerHTML = `
-            <div class="error-content">
-                <i class="fas fa-exclamation-triangle"></i>
-                <span>Erreur de sauvegarde: ${error.message}</span>
-                <button onclick="this.parentElement.parentElement.remove()">
-                    <i class="fas fa-times"></i>
-                </button>
-                <button onclick="AutoSaveManager.instance.saveAllData()" class="retry-btn">
-                    <i class="fas fa-redo"></i> Réessayer
-                </button>
-            </div>
-        `;
-        
-        document.body.appendChild(errorDiv);
-        
-        setTimeout(() => {
-            if (errorDiv.parentElement) {
-                errorDiv.remove();
-            }
-        }, 10000);
-    }
-}
-
-// Singleton
-AutoSaveManager.instance = new AutoSaveManager();
-
-// ==================== IMPORT/EXPORT AVANCÉ ====================
-class ImportExportManager {
-    constructor() {
-        this.exportInterval = null;
-        this.init();
-    }
-    
-    init() {
-        // Export automatique toutes les heures
-        this.startAutoExport();
-        
-        // Backup au démarrage
-        this.createStartupBackup();
-    }
-    
-    startAutoExport() {
-        // Vérifier si un export est nécessaire toutes les heures
-        this.exportInterval = setInterval(() => {
-            const lastExport = localStorage.getItem('last_auto_export');
-            const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-            
-            if (!lastExport || new Date(lastExport) < oneHourAgo) {
-                this.exportAllData(true); // Export silencieux
-                localStorage.setItem('last_auto_export', new Date().toISOString());
-            }
-        }, 15 * 60 * 1000); // Vérifier toutes les 15 minutes
-    }
-    
-    async createStartupBackup() {
-        // Créer un backup au démarrage si aucun récent n'existe
-        const lastBackup = localStorage.getItem('last_startup_backup');
-        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        
-        if (!lastBackup || new Date(lastBackup) < yesterday) {
-            await this.exportAllData(true);
-            localStorage.setItem('last_startup_backup', new Date().toISOString());
-        }
-    }
-    
-    async exportAllData(silent = false) {
-        try {
-            // Récupérer toutes les données
-            const clients = await dbManager.getAll('clients');
-            const interventions = await dbManager.getAll('interventions');
-            const factures = await dbManager.getAll('factures');
-            const settings = await dbManager.getAll('settings');
-            
-            const exportData = {
-                metadata: {
-                    exportDate: new Date().toISOString(),
-                    version: '2.0',
-                    recordCounts: {
-                        clients: clients.length,
-                        interventions: interventions.length,
-                        factures: factures.length
-                    }
-                },
-                data: {
-                    clients: clients,
-                    interventions: interventions,
-                    factures: factures,
-                    settings: settings
-                }
-            };
-            
-            // Générer le fichier
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
-                type: 'application/json' 
-            });
-            
-            const url = URL.createObjectURL(blob);
-            const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
-            const filename = `firecheck_backup_${timestamp}_${Date.now()}.json`;
-            
-            // Sauvegarder dans IndexedDB aussi
-            await dbManager.save('settings', {
-                id: `backup_${timestamp}`,
-                data: exportData,
-                timestamp: new Date().toISOString()
-            });
-            
-            // Télécharger automatiquement seulement si demandé
-            if (!silent) {
-                this.downloadFile(url, filename);
-            }
-            
-            // Nettoyer les vieux backups (garder les 5 derniers)
-            await this.cleanOldBackups();
-            
-            if (!silent) {
-                showSuccess(`Backup créé: ${filename} (${clients.length} clients, ${interventions.length} interventions)`);
-            }
-            
-            return exportData;
-            
-        } catch (error) {
-            console.error('Erreur export:', error);
-            if (!silent) {
-                showError('Erreur lors de la création du backup');
-            }
-            throw error;
-        }
-    }
-    
-    async importData(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            
-            reader.onload = async (event) => {
-                try {
-                    const importData = JSON.parse(event.target.result);
-                    
-                    // Validation des données
-                    if (!this.validateImportData(importData)) {
-                        throw new Error('Format de fichier invalide');
-                    }
-                    
-                    // Confirmation utilisateur
-                    if (!confirm(this.getImportConfirmationMessage(importData))) {
-                        reject(new Error('Import annulé'));
-                        return;
-                    }
-                    
-                    // Sauvegarde avant import
-                    await this.createPreImportBackup();
-                    
-                    // Importer les données
-                    await this.processImport(importData);
-                    
-                    // Recharger l'application
-                    await this.reloadAppAfterImport();
-                    
-                    showSuccess('Import réussi !');
-                    resolve();
-                    
-                } catch (error) {
-                    console.error('Erreur import:', error);
-                    showError(`Erreur import: ${error.message}`);
-                    reject(error);
-                }
-            };
-            
-            reader.onerror = () => {
-                reject(new Error('Erreur de lecture du fichier'));
-            };
-            
-            reader.readAsText(file);
-        });
-    }
-    
-    validateImportData(data) {
-        return data && 
-               data.metadata && 
-               data.data && 
-               Array.isArray(data.data.clients);
-    }
-    
-    getImportConfirmationMessage(data) {
-        const counts = data.metadata.recordCounts;
-        return `
-            Voulez-vous importer :
-            • ${counts.clients || 0} client(s)
-            • ${counts.interventions || 0} intervention(s)
-            • ${counts.factures || 0} facture(s)
-            
-            ⚠️ Cela écrasera vos données existantes.
-            Une sauvegarde automatique a été créée.
-        `;
-    }
-    
-    async createPreImportBackup() {
-        // Créer un backup spécial avant import
-        const backup = await this.exportAllData(true);
-        await dbManager.save('settings', {
-            id: 'pre_import_backup',
-            data: backup,
-            timestamp: new Date().toISOString()
-        });
-    }
-    
-    async processImport(importData) {
-        // Vider les stores existants
-        await dbManager.clearStore('clients');
-        await dbManager.clearStore('interventions');
-        await dbManager.clearStore('factures');
-        
-        // Importer les nouvelles données
-        if (importData.data.clients.length > 0) {
-            await dbManager.saveAll('clients', importData.data.clients);
-        }
-        
-        if (importData.data.interventions.length > 0) {
-            await dbManager.saveAll('interventions', importData.data.interventions);
-        }
-        
-        if (importData.data.factures.length > 0) {
-            await dbManager.saveAll('factures', importData.data.factures);
-        }
-        
-        // Mettre à jour les settings
-        await dbManager.save('settings', {
-            id: 'last_import',
-            data: importData.metadata,
-            timestamp: new Date().toISOString()
-        });
-    }
-    
-    async reloadAppAfterImport() {
-        // Recharger les données
-        AppState.clients = await dbManager.getAll('clients');
-        AppState.currentInterventions = await dbManager.getAll('interventions');
-        
-        // Réinitialiser l'état
-        AppState.currentClient = null;
-        AppState.unsavedChanges = false;
-        
-        // Rafraîchir l'interface
-        if (AppState.currentPage === 'clients') {
-            displayClientsList();
-        }
-        
-        updateClientInfoBadge();
-    }
-    
-    downloadFile(url, filename) {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.style.display = 'none';
-        
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        // Libérer l'URL
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-    
-    async cleanOldBackups() {
-        const backups = await dbManager.getAll('settings');
-        const backupKeys = backups
-            .filter(item => item.id.startsWith('backup_'))
-            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        
-        // Garder seulement les 5 derniers backups
-        if (backupKeys.length > 5) {
-            for (let i = 5; i < backupKeys.length; i++) {
-                await dbManager.delete('settings', backupKeys[i].id);
-            }
-        }
-    }
-    
-    // Export sélectif
-    async exportSelection(type, ids) {
-        let data = [];
-        
-        switch(type) {
-            case 'clients':
-                data = await Promise.all(
-                    ids.map(id => dbManager.get('clients', id))
-                );
-                break;
-            case 'interventions':
-                data = await Promise.all(
-                    ids.map(id => dbManager.get('interventions', id))
-                );
-                break;
-        }
-        
-        const exportData = {
-            type: type,
-            items: data.filter(item => item !== undefined),
-            exportDate: new Date().toISOString()
-        };
-        
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
-            type: 'application/json' 
-        });
-        
-        const url = URL.createObjectURL(blob);
-        const filename = `firecheck_${type}_export_${Date.now()}.json`;
-        
-        this.downloadFile(url, filename);
-        showSuccess(`${data.length} ${type} exporté(s)`);
-    }
-}
 
 // ==================== INITIALISATION ====================
 document.addEventListener('DOMContentLoaded', function() {
@@ -1236,49 +650,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function initApp() {
     try {
-        // Afficher un écran de chargement
         showLoading('Initialisation...');
         
-        // Initialiser les gestionnaires
         await dbManager.init();
-        const offlineManager = new OfflineManager();
-        const importExportManager = new ImportExportManager();
         
-        // Charger les données
         await loadData();
-        
-        // Initialiser les composants UI
         initComponents();
-        
-        // Initialiser PWA
         initPWA();
-        
-        // Ajouter le CSS de gestion des données
+        addLogoutButtonCSS();
+        addLogoutButton();
         addDataManagementCSS();
         
-        // Ajouter le CSS pour le bouton de déconnexion
-        addLogoutButtonCSS();
-        
-        // Ajouter le bouton de déconnexion
-        addLogoutButton();
-        
-        // Afficher la première page
         navigateTo(AppState.currentPage || 'clients');
         
-        // Ajouter l'UI de gestion des données
         setTimeout(addDataManagementUI, 1000);
         
-        // Cacher le chargement
         closeLoading();
-        
-        // Afficher les statistiques
         showDataStats();
         
-        console.log('FireCheck Pro amélioré initialisé avec succès');
+        console.log('FireCheck Pro initialisé avec succès');
         
     } catch (error) {
         console.error('Erreur initialisation:', error);
-        showError('Erreur lors de l\'initialisation de l\'application');
+        showError('Erreur lors de l\'initialisation');
         closeLoading();
     }
 }
@@ -1286,7 +680,6 @@ async function initApp() {
 function initComponents() {
     initNavigation();
     initSignaturePads();
-    initAlarmeEvents();
     initResponsiveHandlers();
     setTodayDate();
     generateCalendar(AppState.currentMonth, AppState.currentYear);
@@ -1308,29 +701,21 @@ function initPWA() {
 
 // ==================== BOUTON DE DÉCONNEXION ====================
 function addLogoutButton() {
-    // Chercher l'élément existant avec les trois points
     const headerControls = document.querySelector('.header-controls');
     if (!headerControls) return;
     
-    // Supprimer l'ancien bouton de menu s'il existe
     const oldMenuBtn = headerControls.querySelector('.menu-toggle');
-    if (oldMenuBtn) {
-        oldMenuBtn.remove();
-    }
+    if (oldMenuBtn) oldMenuBtn.remove();
     
-    // Supprimer aussi les autres boutons de menu déroulant s'ils existent
     const menuButtons = headerControls.querySelectorAll('[data-menu-toggle]');
     menuButtons.forEach(btn => btn.remove());
     
-    // Créer le bouton de déconnexion
     const logoutBtn = document.createElement('button');
     logoutBtn.className = 'btn btn-sm btn-danger logout-btn';
     logoutBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> <span class="logout-text">Déconnexion</span>';
     logoutBtn.title = 'Se déconnecter';
-    logoutBtn.setAttribute('aria-label', 'Se déconnecter');
     logoutBtn.onclick = logoutUser;
     
-    // Insérer avant le bouton données si existe, sinon à la fin
     const dataBtn = headerControls.querySelector('[onclick*="showDataManagementModal"]');
     if (dataBtn) {
         headerControls.insertBefore(logoutBtn, dataBtn);
@@ -1340,22 +725,17 @@ function addLogoutButton() {
 }
 
 function logoutUser() {
-    if (confirm('Voulez-vous vraiment vous déconnecter ? Toutes les modifications non sauvegardées seront perdues.')) {
-        // Sauvegarder les données avant déconnexion
+    if (confirm('Voulez-vous vraiment vous déconnecter ?')) {
         saveCurrentClientChanges();
         saveInterventions();
         
-        // Réinitialiser l'état de l'application
         AppState.currentClient = null;
         AppState.clients = [];
         AppState.currentInterventions = [];
         AppState.calendarEvents = [];
         
-        // Rediriger vers la page de connexion ou recharger
         showSuccess('Déconnexion réussie');
         setTimeout(() => {
-            // Pour une PWA, on pourrait rediriger vers une page de login
-            // Pour l'instant, on recharge juste la page
             window.location.reload();
         }, 1500);
     }
@@ -1364,7 +744,6 @@ function logoutUser() {
 function addLogoutButtonCSS() {
     const style = document.createElement('style');
     style.textContent = `
-        /* Bouton de déconnexion */
         .logout-btn {
             background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
             border: none;
@@ -1379,8 +758,6 @@ function addLogoutButtonCSS() {
             gap: 8px;
             margin-right: 10px;
             box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
-            white-space: nowrap;
-            overflow: hidden;
         }
         
         .logout-btn:hover {
@@ -1389,140 +766,101 @@ function addLogoutButtonCSS() {
             box-shadow: 0 4px 8px rgba(220, 53, 69, 0.4);
         }
         
-        .logout-btn:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
-        }
-        
-        .logout-btn i {
-            font-size: 0.9em;
-            flex-shrink: 0;
-        }
-        
-        .logout-text {
-            flex-shrink: 0;
-        }
-        
-        /* Responsive */
         @media (max-width: 768px) {
             .logout-btn {
                 padding: 6px 12px;
-                font-size: 0.9em;
-                margin-right: 8px;
-                gap: 6px;
-            }
-            
-            .logout-text {
                 font-size: 0.9em;
             }
         }
         
         @media (max-width: 600px) {
-            .logout-btn {
-                padding: 6px 10px;
-                margin-right: 6px;
-            }
-            
             .logout-text {
-                display: none; /* Cacher le texte sur très petits écrans */
-            }
-            
-            .logout-btn i {
-                margin: 0;
-                font-size: 1em;
-            }
-        }
-        
-        @media (max-width: 480px) {
-            .header-controls {
-                display: flex;
-                gap: 6px;
-                flex-wrap: nowrap;
-            }
-            
-            .logout-btn {
-                padding: 6px;
-                border-radius: 6px;
-                min-width: 40px;
-                height: 36px;
-                justify-content: center;
-                margin-right: 4px;
-            }
-            
-            .logout-btn i {
-                font-size: 1em;
-            }
-        }
-        
-        /* Assurer que les boutons ne se chevauchent pas */
-        @media (max-width: 380px) {
-            .header-controls {
-                gap: 4px;
-            }
-            
-            .logout-btn {
-                margin-right: 2px;
-                padding: 5px;
-                min-width: 36px;
-                height: 34px;
+                display: none;
             }
         }
     `;
     document.head.appendChild(style);
 }
 
-// ==================== MODIFICATIONS DES FONCTIONS EXISTANTES ====================
+// ==================== FONCTIONS DE STOCKAGE ====================
+function loadFromStorage(key) {
+    try {
+        const item = localStorage.getItem(key);
+        return item ? JSON.parse(item) : null;
+    } catch (error) {
+        console.error('Erreur loadFromStorage:', error);
+        return null;
+    }
+}
 
-// Remplacez les fonctions de sauvegarde existantes
-async function saveClients() {
-    if (AppState.clients.length > 0) {
-        await dbManager.saveAll('clients', AppState.clients);
+function saveToStorage(key, data) {
+    try {
+        localStorage.setItem(key, JSON.stringify(data));
+        return true;
+    } catch (error) {
+        console.error('Erreur saveToStorage:', error);
+        return false;
+    }
+}
+
+function saveCalendarEvents() {
+    try {
+        saveToStorage('calendarEvents', AppState.calendarEvents);
+        console.log(`${AppState.calendarEvents.length} événement(s) sauvegardé(s)`);
+        return true;
+    } catch (error) {
+        console.error('Erreur sauvegarde événements:', error);
+        return false;
+    }
+}
+
+function loadCalendarEvents() {
+    try {
+        const storedEvents = loadFromStorage('calendarEvents');
         
-        // Marquer les changements non sauvegardés
-        AutoSaveManager.instance.markUnsavedChanges();
-        
-        // Ajouter à la file de sync
-        if (AppState.isOnline) {
-            const offlineManager = new OfflineManager();
-            await offlineManager.addToSyncQueue('saveClients', {
-                clients: AppState.clients,
-                timestamp: new Date().toISOString()
-            });
+        if (storedEvents && Array.isArray(storedEvents)) {
+            AppState.calendarEvents = storedEvents;
+            console.log(`${AppState.calendarEvents.length} événement(s) chargé(s)`);
+        } else {
+            AppState.calendarEvents = [];
         }
+        
+        mergeCalendarEventsWithInterventions();
+        
+    } catch (error) {
+        console.error('Erreur chargement événements:', error);
+        AppState.calendarEvents = [];
     }
 }
 
-async function saveInterventions() {
-    if (AppState.currentInterventions.length > 0) {
-        await dbManager.saveAll('interventions', AppState.currentInterventions);
-        AutoSaveManager.instance.markUnsavedChanges();
-    }
+function mergeCalendarEventsWithInterventions() {
+    AppState.calendarEvents.forEach(event => {
+        const existingIntervention = AppState.currentInterventions.find(i => i.id === event.id);
+        if (!existingIntervention) {
+            AppState.currentInterventions.push(event);
+        }
+    });
+    
+    saveCalendarEvents();
+    saveInterventions();
 }
 
-// Modifier la fonction loadData
+// ==================== CHARGEMENT DONNÉES ====================
 async function loadData() {
     try {
-        // Initialiser IndexedDB
         await dbManager.init();
         
-        // Charger depuis IndexedDB
         AppState.clients = await dbManager.getAll('clients');
         AppState.currentInterventions = await dbManager.getAll('interventions');
         
-        // Charger l'état de l'application
-        await AutoSaveManager.instance.loadAppState();
-        
-        // Charger les événements du calendrier
         loadCalendarEvents();
         
-        // Afficher les statistiques
         const stats = await dbManager.getStats();
         console.log('Données chargées:', stats);
         
     } catch (error) {
         console.error('Erreur chargement données:', error);
         
-        // Fallback vers localStorage
         const savedClients = localStorage.getItem('firecheck_clients');
         const savedInterventions = localStorage.getItem('firecheck_interventions');
         
@@ -1534,118 +872,19 @@ async function loadData() {
             AppState.currentInterventions = JSON.parse(savedInterventions);
         }
         
-        // Charger aussi les événements du calendrier depuis localStorage
         loadCalendarEvents();
     }
 }
 
-// ==================== FONCTIONS DE STOCKAGE LOCAL ====================
-function loadFromStorage(key) {
-    try {
-        const item = localStorage.getItem(key);
-        return item ? JSON.parse(item) : null;
-    } catch (error) {
-        console.error('Erreur lors du chargement depuis le stockage:', error);
-        return null;
-    }
-}
-
-function saveToStorage(key, data) {
-    try {
-        localStorage.setItem(key, JSON.stringify(data));
-        return true;
-    } catch (error) {
-        console.error('Erreur lors de la sauvegarde dans le stockage:', error);
-        return false;
-    }
-}
-
-function clearStorage(key) {
-    try {
-        if (key) {
-            localStorage.removeItem(key);
-        } else {
-            localStorage.clear();
-        }
-        return true;
-    } catch (error) {
-        console.error('Erreur lors de la suppression du stockage:', error);
-        return false;
-    }
-}
-
-function getStorageKeys() {
-    try {
-        return Object.keys(localStorage);
-    } catch (error) {
-        console.error('Erreur lors de la récupération des clés:', error);
-        return [];
-    }
-}
-
-function saveCalendarEvents() {
-    try {
-        saveToStorage('calendarEvents', AppState.calendarEvents);
-        console.log(`💾 ${AppState.calendarEvents.length} événement(s) sauvegardé(s)`);
-        return true;
-    } catch (error) {
-        console.error('❌ Erreur lors de la sauvegarde des événements:', error);
-        return false;
-    }
-}
-
-// ==================== GESTION DU CALENDRIER ====================
-function loadCalendarEvents() {
-    try {
-        // Charger les événements depuis le stockage local
-        const storedEvents = loadFromStorage('calendarEvents');
-        
-        if (storedEvents && Array.isArray(storedEvents)) {
-            AppState.calendarEvents = storedEvents;
-            console.log(`✅ ${AppState.calendarEvents.length} événement(s) chargé(s) depuis le stockage`);
-        } else {
-            // Initialiser avec des données par défaut si vide
-            AppState.calendarEvents = [];
-            console.log('📅 Aucun événement trouvé, initialisation avec tableau vide');
-        }
-        
-        // S'assurer que les événements sont aussi dans les interventions
-        mergeCalendarEventsWithInterventions();
-        
-    } catch (error) {
-        console.error('❌ Erreur lors du chargement des événements:', error);
-        // Initialiser avec tableau vide en cas d'erreur
-        AppState.calendarEvents = [];
-    }
-}
-
-function mergeCalendarEventsWithInterventions() {
-    // S'assurer que les événements du calendrier sont aussi dans les interventions
-    AppState.calendarEvents.forEach(event => {
-        // Vérifier si l'événement existe déjà dans les interventions
-        const existingIntervention = AppState.currentInterventions.find(i => i.id === event.id);
-        if (!existingIntervention) {
-            AppState.currentInterventions.push(event);
-        }
-    });
-    
-    // Mettre à jour le stockage
-    saveCalendarEvents();
-    saveInterventions();
-}
-
 // ==================== GESTION RESPONSIVE ====================
 function initResponsiveHandlers() {
-    // Adapter l'interface à la taille de l'écran
     adaptInterfaceToScreenSize();
     
-    // Redimensionner les canvas de signature
     window.addEventListener('resize', debounce(() => {
         resizeSignatureCanvases();
         adaptInterfaceToScreenSize();
     }, 250));
     
-    // Empêcher le zoom sur iOS
     preventIOSZoom();
 }
 
@@ -1653,28 +892,19 @@ function adaptInterfaceToScreenSize() {
     const width = window.innerWidth;
     const html = document.documentElement;
     
-    // Déterminer le type d'appareil
     if (width < CONFIG.responsiveBreakpoints.mobile) {
-        html.classList.add('mobile', 'small-screen');
-        html.classList.remove('tablet', 'desktop');
+        html.className = 'mobile small-screen';
         html.style.fontSize = '14px';
     } else if (width < CONFIG.responsiveBreakpoints.tablet) {
-        html.classList.add('tablet', 'medium-screen');
-        html.classList.remove('mobile', 'desktop');
+        html.className = 'tablet medium-screen';
         html.style.fontSize = '15px';
     } else {
-        html.classList.add('desktop', 'large-screen');
-        html.classList.remove('mobile', 'tablet');
+        html.className = 'desktop large-screen';
         html.style.fontSize = '16px';
     }
     
-    // Ajuster la navigation mobile
     adjustMobileNavigation(width);
-    
-    // Ajuster les modals
     adjustModals(width);
-    
-    // Ajuster le bouton de déconnexion
     adjustLogoutButton(width);
 }
 
@@ -1710,59 +940,30 @@ function adjustLogoutButton(width) {
     const logoutText = logoutBtn.querySelector('.logout-text');
     
     if (width < 600) {
-        // Mode très petit écran - cacher le texte
-        if (logoutText) {
-            logoutText.style.display = 'none';
-        }
-        
+        if (logoutText) logoutText.style.display = 'none';
         logoutBtn.style.padding = '6px';
-        logoutBtn.style.minWidth = '40px';
-        logoutBtn.style.justifyContent = 'center';
-        
     } else if (width < 768) {
-        // Mode mobile - bouton compact
         if (logoutText) {
             logoutText.style.display = 'inline';
             logoutText.style.fontSize = '0.9em';
         }
-        
         logoutBtn.style.padding = '6px 12px';
-        logoutBtn.style.minWidth = 'auto';
-        
     } else {
-        // Mode desktop - bouton complet
         if (logoutText) {
             logoutText.style.display = 'inline';
             logoutText.style.fontSize = '1em';
         }
-        
         logoutBtn.style.padding = '8px 16px';
-        logoutBtn.style.minWidth = 'auto';
     }
 }
 
 function preventIOSZoom() {
-    // Empêcher le zoom sur les champs de saisie iOS
     document.addEventListener('touchstart', function(e) {
         const target = e.target;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
             target.style.fontSize = '16px';
         }
     }, { passive: true });
-    
-    // Gérer le clavier virtuel
-    window.addEventListener('resize', function() {
-        const activeElement = document.activeElement;
-        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-            setTimeout(() => {
-                activeElement.scrollIntoView({ 
-                    behavior: 'smooth', 
-                    block: 'nearest',
-                    inline: 'nearest' 
-                });
-            }, 300);
-        }
-    });
 }
 
 function resizeSignatureCanvases() {
@@ -1794,7 +995,6 @@ function resizeSignatureCanvases() {
 
 // ==================== NAVIGATION ====================
 function initNavigation() {
-    // Navigation par onglets
     document.querySelectorAll('.nav-tab').forEach(tab => {
         tab.addEventListener('click', function(e) {
             e.preventDefault();
@@ -1803,7 +1003,6 @@ function initNavigation() {
         });
     });
     
-    // Menu hamburger pour mobile
     const menuToggle = document.getElementById('menu-toggle');
     if (menuToggle) {
         menuToggle.addEventListener('click', function() {
@@ -1814,30 +1013,16 @@ function initNavigation() {
         });
     }
     
-    // Navigation par swipe
     initSwipeNavigation();
 }
 
 function navigateTo(page) {
-    // Sauvegarder les modifications en cours
     saveCurrentClientChanges();
-    
-    // Mettre à jour la page active
     AppState.currentPage = page;
-    
-    // Mettre à jour les onglets
     updateActiveTab(page);
-    
-    // Afficher la page
     showPage(page);
-    
-    // Actions spécifiques à la page
     executePageActions(page);
-    
-    // Fermer le menu mobile si ouvert
     closeMobileMenu();
-    
-    // Scroll vers le haut sur mobile
     scrollToTopOnMobile();
 }
 
@@ -2079,7 +1264,7 @@ function createClientListItem(client) {
             </div>
             <div class="compact-material-actions">
                 <button class="btn btn-sm btn-danger" onclick="deleteClient('${client.id}', event)" 
-                        title="Supprimer" aria-label="Supprimer client">
+                        title="Supprimer">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>
@@ -2127,19 +1312,15 @@ function searchClients() {
 }
 
 function selectClient(client) {
-    // Sauvegarder les modifications du client actuel
     if (AppState.currentClient) {
         saveCurrentClientChanges();
     }
     
-    // Créer une copie profonde du client
     AppState.currentClient = JSON.parse(JSON.stringify(client));
     
-    // Mettre à jour l'interface
     displayClientsList();
     updateClientInfoBadge();
     
-    // Recharger les listes si nécessaire
     if (AppState.currentPage === 'materials') {
         displayMaterialsList();
     }
@@ -2148,10 +1329,15 @@ function selectClient(client) {
         displayVerificationList();
     }
     
-    // Mettre à jour les interventions
     updateInterventionClientList();
     
     showSuccess(`Client ${client.name} sélectionné`);
+}
+
+async function saveClients() {
+    if (AppState.clients.length > 0) {
+        await dbManager.saveAll('clients', AppState.clients);
+    }
 }
 
 function saveCurrentClientChanges() {
@@ -2167,7 +1353,7 @@ function saveCurrentClientChanges() {
 function deleteClient(clientId, event) {
     if (event) event.stopPropagation();
     
-    if (!confirm('Êtes-vous sûr de vouloir supprimer ce client ? Tous ses matériels et vérifications seront également supprimés.')) {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer ce client ?')) {
         return;
     }
     
@@ -2176,7 +1362,6 @@ function deleteClient(clientId, event) {
         AppState.clients.splice(index, 1);
         saveClients();
         
-        // Si le client supprimé était le client actuel
         if (AppState.currentClient && AppState.currentClient.id === clientId) {
             AppState.currentClient = null;
             updateClientInfoBadge();
@@ -2243,45 +1428,31 @@ function openMaterialModal(type) {
 }
 
 function resetExtincteurForm() {
-    const fields = {
-        'extincteur-id': '',
-        'extincteur-location': '',
-        'extincteur-type': '',
-        'extincteur-fabricant': '',
-        'extincteur-modele': '',
-        'extincteur-annee': new Date().getFullYear(),
-        'extincteur-capacite': '',
-        'extincteur-pesee': '',
-        'extincteur-observations': '',
-        'extincteur-etat-general-comment': ''
-    };
-    
-    setFormValues(fields);
-    
-    // Dates
     const today = new Date().toISOString().split('T')[0];
     const nextYear = new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0];
     
+    setElementValue('extincteur-id', '');
+    setElementValue('extincteur-location', '');
+    setElementValue('extincteur-type', '');
+    setElementValue('extincteur-fabricant', '');
+    setElementValue('extincteur-modele', '');
+    setElementValue('extincteur-annee', new Date().getFullYear());
+    setElementValue('extincteur-capacite', '');
+    setElementValue('extincteur-pesee', '');
+    setElementValue('extincteur-observations', '');
+    setElementValue('extincteur-etat-general-comment', '');
     setElementValue('extincteur-date-controle', today);
     setElementValue('extincteur-prochain-controle', nextYear);
     
-    // Champs OK/NOK
     resetOkNokFields(['etat-general', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite']);
-    
-    // Cases à cocher
     setCheckboxValue('extincteur-maa', false);
     setCheckboxValue('extincteur-eiee', false);
     setCheckboxValue('extincteur-recharge', false);
     setCheckboxValue('extincteur-scelle', false);
     setCheckboxValue('extincteur-remplacement-joint', false);
     
-    // Type d'intervention
     selectExtincteurInterventionType('verification');
-    
-    // Photos
     clearPhotoGallery('extincteur-photo-gallery');
-    
-    // Bouton
     updateModalButton('add-extincteur-modal', 'Ajouter', addExtincteurToList);
 }
 
@@ -2407,7 +1578,7 @@ function createMaterialListItem(material, index) {
             </div>
             <div class="compact-material-actions">
                 <button class="btn btn-sm btn-danger" onclick="removeMaterial(${index})" 
-                        title="Supprimer" aria-label="Supprimer matériel">
+                        title="Supprimer">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>
@@ -2456,7 +1627,6 @@ function displayVerificationList() {
     
     if (!verificationList) return;
     
-    // Mettre à jour le badge client
     updateClientInfoBadge();
     
     if (!AppState.currentClient || !AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
@@ -2465,13 +1635,9 @@ function displayVerificationList() {
         return;
     }
     
-    // Filtrer les matériels
     const filteredMaterials = filterMaterialsForVerification();
-    
-    // Générer le HTML
     verificationList.innerHTML = createVerificationListHTML(filteredMaterials);
     
-    // Mettre à jour les compteurs
     const verifiedCount = filteredMaterials.filter(m => isVerifiedForCurrentYear(m)).length;
     const toVerifyCount = filteredMaterials.length - verifiedCount;
     
@@ -2483,13 +1649,11 @@ function filterMaterialsForVerification() {
     const materials = AppState.currentClient.materials;
     
     return materials.filter(material => {
-        // Filtre par famille
         if (!AppState.currentFamilyFilter.includes('all')) {
             if (AppState.currentFamilyFilter.length === 0) return false;
             if (!AppState.currentFamilyFilter.includes(material.type)) return false;
         }
         
-        // Filtre par recherche
         const searchFields = [
             material.id || material.numero || '',
             material.localisation || material.location || '',
@@ -2502,7 +1666,6 @@ function filterMaterialsForVerification() {
 }
 
 function sortMaterialsByTypeAndId(a, b) {
-    // Tri par type
     const typeOrder = { 'extincteur': 1, 'ria': 2, 'baes': 3, 'alarme': 4 };
     const typeComparison = (typeOrder[a.type] || 4) - (typeOrder[b.type] || 4);
     
@@ -2510,7 +1673,6 @@ function sortMaterialsByTypeAndId(a, b) {
         return typeComparison;
     }
     
-    // Tri par ID numérique
     const aId = a.id || a.numero || '';
     const bId = b.id || b.numero || '';
     
@@ -2593,7 +1755,6 @@ function createFamilyFilterStats() {
         </span>
     `;
     
-    // Statistiques par famille
     CONFIG.familyFilters.slice(1).forEach(family => {
         const count = materials.filter(m => m.type === family).length;
         if (count > 0) {
@@ -2605,7 +1766,6 @@ function createFamilyFilterStats() {
         }
     });
     
-    // Filtre actif
     if (AppState.currentFamilyFilter.length > 0 && !AppState.currentFamilyFilter.includes('all')) {
         const activeFilters = AppState.currentFamilyFilter.map(f => getFamilyText(f)).join(', ');
         stats += `
@@ -2621,6 +1781,7 @@ function createFamilyFilterStats() {
 function createVerificationItemHTML(material, originalIndex) {
     const materialInfo = getMaterialInfo(material.type);
     const isVerified = isVerifiedForCurrentYear(material);
+    const etatConformite = getEtatConformite(material);
     
     let statusBadge = '';
     let verificationYearInfo = '';
@@ -2650,6 +1811,9 @@ function createVerificationItemHTML(material, originalIndex) {
                     <i class="fas ${materialInfo.icon}"></i>
                     ${materialInfo.text} - ${material.id || material.numero}
                     ${statusBadge}
+                    <span class="status-badge ${etatConformite === 'Conforme' ? 'status-ok' : 'status-danger'}">
+                        <i class="fas ${etatConformite === 'Conforme' ? 'fa-check' : 'fa-times'}"></i> ${etatConformite}
+                    </span>
                 </div>
                 <div class="compact-material-details">
                     ${material.localisation || material.location || 'Non spécifié'}
@@ -2661,26 +1825,41 @@ function createVerificationItemHTML(material, originalIndex) {
             </div>
             <div class="compact-material-actions">
                 <button class="btn btn-sm" onclick="editMaterialForVerification(${originalIndex})" 
-                        title="Modifier" aria-label="Modifier matériel">
+                        title="Modifier">
                     <i class="fas fa-edit"></i>
                 </button>
                 ${!isVerified 
                     ? `<button class="btn btn-sm btn-success" onclick="verifyMaterial(${originalIndex})" 
-                           title="Valider la vérification" aria-label="Valider vérification">
+                           title="Valider la vérification">
                         <i class="fas fa-check"></i>
                        </button>`
                     : `<button class="btn btn-sm btn-danger" onclick="unverifyMaterial(${originalIndex})" 
-                           title="Marquer à vérifier" aria-label="Marquer à vérifier">
+                           title="Marquer à vérifier">
                         <i class="fas fa-redo"></i>
                        </button>`
                 }
                 <button class="btn btn-sm btn-danger" onclick="removeMaterialFromVerification(${originalIndex})" 
-                        title="Supprimer" aria-label="Supprimer matériel">
+                        title="Supprimer">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>
         </div>
     `;
+}
+
+function getEtatConformite(material) {
+    switch(material.type) {
+        case 'extincteur':
+            return isExtincteurConforme(material) ? 'Conforme' : 'Non conforme';
+        case 'ria':
+            return isRIAConforme(material) ? 'Conforme' : 'Non conforme';
+        case 'baes':
+            return isBAESConforme(material) ? 'Conforme' : 'Non conforme';
+        case 'alarme':
+            return isAlarmeConforme(material) ? 'Conforme' : 'Non conforme';
+        default:
+            return 'Non vérifié';
+    }
 }
 
 function isVerifiedForCurrentYear(material) {
@@ -2716,10 +1895,8 @@ function toggleFamilyFilter(family) {
     if (family === 'all') {
         AppState.currentFamilyFilter = ['all'];
     } else {
-        // Retirer 'all' si présent
         AppState.currentFamilyFilter = AppState.currentFamilyFilter.filter(f => f !== 'all');
         
-        // Basculer le filtre
         const index = AppState.currentFamilyFilter.indexOf(family);
         if (index === -1) {
             AppState.currentFamilyFilter.push(family);
@@ -2727,7 +1904,6 @@ function toggleFamilyFilter(family) {
             AppState.currentFamilyFilter.splice(index, 1);
         }
         
-        // Si plus aucun filtre, activer "Tous"
         if (AppState.currentFamilyFilter.length === 0) {
             AppState.currentFamilyFilter = ['all'];
         }
@@ -2742,7 +1918,6 @@ function verifyAllInFamily(family) {
         return;
     }
     
-    // Matériels à vérifier selon les filtres actuels
     const familyMaterials = AppState.currentFamilyFilter.includes('all') 
         ? AppState.currentClient.materials 
         : AppState.currentClient.materials.filter(m => AppState.currentFamilyFilter.includes(m.type));
@@ -2854,12 +2029,10 @@ function completeVerification() {
         return;
     }
     
-    // Matériels selon les filtres actuels
     const materialsToCheck = AppState.currentFamilyFilter.includes('all') 
         ? AppState.currentClient.materials 
         : AppState.currentClient.materials.filter(m => AppState.currentFamilyFilter.includes(m.type));
     
-    // Matériels vérifiés
     const verifiedMaterials = materialsToCheck.filter(m => m.verified && isVerifiedForCurrentYear(m));
     
     if (verifiedMaterials.length === 0) {
@@ -2868,9 +2041,8 @@ function completeVerification() {
     }
     
     const filterNames = getActiveFilterNames();
-    showSuccess(`Vérification terminée pour ${filterNames} ! ${verifiedMaterials.length} matériel(s) vérifié(s) pour ${new Date().getFullYear()}. Vous pouvez maintenant passer à la signature.`);
+    showSuccess(`Vérification terminée pour ${filterNames} ! ${verifiedMaterials.length} matériel(s) vérifié(s) pour ${new Date().getFullYear()}.`);
     
-    // Réinitialiser le filtre
     AppState.currentFamilyFilter = ['all'];
     navigateTo('signature');
 }
@@ -2903,14 +2075,12 @@ function initSignaturePad(canvasId, padVariable) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     
-    // Dimensions du canvas
     const container = canvas.parentElement;
     if (container) {
         canvas.width = container.clientWidth;
         canvas.height = container.clientHeight;
     }
     
-    // Créer le pad de signature
     const signaturePad = new SignaturePad(canvas, {
         backgroundColor: 'white',
         penColor: 'rgb(26, 54, 93)',
@@ -2921,14 +2091,12 @@ function initSignaturePad(canvasId, padVariable) {
         }
     });
     
-    // Activer le support tactile
     canvas.addEventListener('touchstart', function(e) {
         e.preventDefault();
     }, { passive: false });
     
     canvas.style.touchAction = 'none';
     
-    // Stocker la référence
     if (padVariable === 'clientSignaturePad') {
         clientSignaturePad = signaturePad;
     } else {
@@ -3053,8 +2221,7 @@ function createFactureItemHTML(item, index) {
             <div class="facture-item-qty">${item.quantity}</div>
             <div class="facture-item-price">${item.price.toFixed(2)} €</div>
             <div class="facture-item-total">${item.total.toFixed(2)} €</div>
-            <button class="btn btn-sm btn-danger" onclick="removeFactureItem(${index})"
-                    aria-label="Supprimer article">
+            <button class="btn btn-sm btn-danger" onclick="removeFactureItem(${index})">
                 <i class="fas fa-trash"></i>
             </button>
         </div>
@@ -3070,7 +2237,6 @@ function removeFactureItem(index) {
 function updateFactureTotal() {
     let totalHT = AppState.factureItems.reduce((sum, item) => sum + item.total, 0);
     
-    // Ajouter les frais de déplacement
     const deplacementCheckbox = document.getElementById('frais-deplacement');
     if (deplacementCheckbox && deplacementCheckbox.checked) {
         const montantInput = document.getElementById('frais-deplacement-montant');
@@ -3105,14 +2271,11 @@ function generateCalendar(month, year) {
     
     calendarDays.innerHTML = '';
     
-    // Jours du mois précédent
-    const prevMonthLastDay = new Date(year, month, 0).getDate();
     for (let i = 0; i < startingDay; i++) {
-        const day = prevMonthLastDay - startingDay + i + 1;
+        const day = new Date(year, month, 0).getDate() - startingDay + i + 1;
         calendarDays.appendChild(createCalendarDay(day, true, month, year));
     }
     
-    // Jours du mois en cours
     const today = new Date();
     for (let day = 1; day <= daysInMonth; day++) {
         const isToday = day === today.getDate() && 
@@ -3122,7 +2285,6 @@ function generateCalendar(month, year) {
         calendarDays.appendChild(createCalendarDay(day, false, month, year, isToday));
     }
     
-    // Sélectionner aujourd'hui si c'est le mois en cours
     if (month === today.getMonth() && year === today.getFullYear()) {
         selectTodayInCalendar(calendarDays);
     }
@@ -3140,7 +2302,6 @@ function createCalendarDay(day, isOtherMonth, month, year, isToday = false) {
         dayElement.classList.add('today');
     }
     
-    // Vérifier les événements
     const events = getEventsForDay(day, month, year);
     if (events.length > 0) {
         dayElement.classList.add('has-events');
@@ -3155,7 +2316,6 @@ function createCalendarDay(day, isOtherMonth, month, year, isToday = false) {
         </div>
     `;
     
-    // Ajouter l'événement de clic
     if (!isOtherMonth) {
         dayElement.addEventListener('click', () => {
             selectCalendarDay(dayElement, day, month, year);
@@ -3166,13 +2326,8 @@ function createCalendarDay(day, isOtherMonth, month, year, isToday = false) {
 }
 
 function selectCalendarDay(dayElement, day, month, year) {
-    // Désélectionner tous les jours
     document.querySelectorAll('.calendar-day').forEach(d => d.classList.remove('selected'));
-    
-    // Sélectionner le jour cliqué
     dayElement.classList.add('selected');
-    
-    // Afficher les événements
     displayEventsForDay(day, month, year);
 }
 
@@ -3184,7 +2339,6 @@ function selectTodayInCalendar(calendarDays) {
 }
 
 function getEventsForDay(day, month, year) {
-    // Chercher dans les événements du calendrier
     return AppState.calendarEvents.filter(event => {
         const eventDate = new Date(event.start);
         return eventDate.getDate() === day && 
@@ -3245,11 +2399,11 @@ function createCalendarEventHTML(event) {
                 </div>
                 <div class="compact-material-actions">
                     <button class="btn btn-sm" onclick="editIntervention('${event.id}')" 
-                            title="Modifier" aria-label="Modifier intervention">
+                            title="Modifier">
                         <i class="fas fa-edit"></i>
                     </button>
                     <button class="btn btn-sm btn-danger" onclick="deleteIntervention('${event.id}')" 
-                            title="Supprimer" aria-label="Supprimer intervention">
+                            title="Supprimer">
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
@@ -3381,7 +2535,6 @@ function saveEditedIntervention(interventionId) {
         return;
     }
     
-    // Mettre à jour l'intervention
     const updatedIntervention = {
         ...AppState.currentInterventions[index],
         ...formData,
@@ -3391,7 +2544,6 @@ function saveEditedIntervention(interventionId) {
     
     AppState.currentInterventions[index] = updatedIntervention;
     
-    // Mettre à jour dans le client
     if (client.interventions) {
         const clientInterventionIndex = client.interventions.findIndex(i => i.id === interventionId);
         if (clientInterventionIndex !== -1) {
@@ -3399,7 +2551,6 @@ function saveEditedIntervention(interventionId) {
         }
     }
     
-    // Mettre à jour dans les événements du calendrier
     const calendarIndex = AppState.calendarEvents.findIndex(e => e.id === interventionId);
     if (calendarIndex !== -1) {
         AppState.calendarEvents[calendarIndex] = updatedIntervention;
@@ -3414,6 +2565,12 @@ function saveEditedIntervention(interventionId) {
     generateCalendar(AppState.currentMonth, AppState.currentYear);
     showSuccess('Intervention modifiée avec succès');
     AppState.currentEditingInterventionId = null;
+}
+
+async function saveInterventions() {
+    if (AppState.currentInterventions.length > 0) {
+        await dbManager.saveAll('interventions', AppState.currentInterventions);
+    }
 }
 
 function saveIntervention() {
@@ -3465,7 +2622,6 @@ function saveIntervention() {
         client.interventions.push(intervention);
     }
     
-    // Ajouter aux événements du calendrier
     const calendarIndex = AppState.calendarEvents.findIndex(e => e.id === interventionId);
     if (calendarIndex !== -1) {
         AppState.calendarEvents[calendarIndex] = intervention;
@@ -3543,7 +2699,6 @@ function deleteIntervention(interventionId) {
         saveClients();
     }
     
-    // Supprimer aussi des événements du calendrier
     AppState.calendarEvents = AppState.calendarEvents.filter(e => e.id !== interventionId);
     
     saveInterventions();
@@ -3574,13 +2729,11 @@ function loadHistory() {
 
 function getVerifiedClients(searchTerm) {
     return AppState.clients.filter(client => {
-        // Vérifier si le client a des vérifications
         const hasVerifications = client.verificationCompleted || 
                                 (client.materials && client.materials.some(m => m.verified));
         
         if (!hasVerifications) return false;
         
-        // Filtrer par recherche
         if (searchTerm) {
             return client.name.toLowerCase().includes(searchTerm) ||
                    client.contact.toLowerCase().includes(searchTerm) ||
@@ -3613,7 +2766,7 @@ function createHistoryItemHTML(client) {
             </div>
             <div class="compact-material-actions">
                 <button class="btn btn-sm btn-primary" onclick="viewClientHistory('${client.id}')" 
-                        title="Voir détails" aria-label="Voir historique client">
+                        title="Voir détails">
                     <i class="fas fa-eye"></i>
                 </button>
             </div>
@@ -3646,70 +2799,6 @@ function viewClientHistory(clientId) {
         selectClient(client);
         navigateTo('verification');
     }
-}
-
-// ==================== EXPORT ====================
-function exportData() {
-    const data = {
-        clients: AppState.clients,
-        interventions: AppState.currentInterventions,
-        calendarEvents: AppState.calendarEvents,
-        exportDate: new Date().toISOString()
-    };
-    
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `firecheck_export_${new Date().toISOString().split('T')[0]}.json`;
-    a.style.display = 'none';
-    
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    
-    URL.revokeObjectURL(url);
-    
-    showSuccess('Données exportées avec succès');
-}
-
-function exportFacturesCSV() {
-    const savedFactures = loadFromStorage(CONFIG.localStorageKeys.factures) || [];
-    
-    if (savedFactures.length === 0) {
-        showError('Aucune facture trouvée');
-        return;
-    }
-    
-    const headers = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Description'];
-    const rows = savedFactures.map(f => [
-        f.numero,
-        f.date,
-        f.clientName,
-        f.totalHT?.toFixed(2) || '0.00',
-        ((f.totalHT || 0) * 0.20).toFixed(2),
-        ((f.totalHT || 0) * 1.20).toFixed(2),
-        `"${(f.description || '').replace(/"/g, '""')}"`
-    ]);
-    
-    const csv = [headers, ...rows].map(row => row.join(';')).join('\n');
-    
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `factures_export_${new Date().toISOString().split('T')[0]}.csv`;
-    a.style.display = 'none';
-    
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    
-    URL.revokeObjectURL(url);
-    
-    showSuccess(`${savedFactures.length} facture(s) exportée(s)`);
 }
 
 // ==================== UTILITAIRES ====================
@@ -4053,563 +3142,38 @@ if ('serviceWorker' in navigator) {
     });
 }
 
-// ==================== FONCTIONS NON IMPLÉMENTÉES ====================
-// Ces fonctions sont définies dans le code original mais ne sont pas entièrement implémentées
-// Elles sont gardées pour la compatibilité
-
-function editMaterialForVerification(index) {
-    console.log('Édition du matériel à l\'index:', index);
-    // À implémenter
-}
-
-function previewReport() {
-    console.log('Prévisualisation du rapport');
-    // À implémenter
-}
-
-function generatePDF() {
-    console.log('Génération PDF');
-    // À implémenter
-}
-
-function printPreview() {
-    window.print();
-}
-
-function previewFacture() {
-    console.log('Prévisualisation facture');
-    // À implémenter
-}
-
-function generateFacturePDF() {
-    console.log('Génération PDF facture');
-    // À implémenter avec jsPDF
-}
-
-function goToVerification() {
-    navigateTo('verification');
-}
-
-function addExtincteurPhoto() {
-    console.log('Ajout photo extincteur');
-    // À implémenter
-}
-
-function handleExtincteurPhotos(files) {
-    console.log('Gestion photos extincteur:', files);
-    // À implémenter
-}
-
-function addRiaPhoto() {
-    console.log('Ajout photo RIA');
-    // À implémenter
-}
-
-function handleRiaPhotos(files) {
-    console.log('Gestion photos RIA:', files);
-    // À implémenter
-}
-
-function addBaesPhoto() {
-    console.log('Ajout photo BAES');
-    // À implémenter
-}
-
-function handleBaesPhotos(files) {
-    console.log('Gestion photos BAES:', files);
-    // À implémenter
-}
-
-function addAlarmePhoto() {
-    console.log('Ajout photo alarme');
-    // À implémenter
-}
-
-function handleAlarmePhotos(files) {
-    console.log('Gestion photos alarme:', files);
-    // À implémenter
-}
-
-function removeAlarmePhoto(index) {
-    console.log('Suppression photo alarme:', index);
-    // À implémenter
-}
-
-function addAlarmeToList() {
-    console.log('Ajout alarme à la liste');
-    // À implémenter
-}
-
-function resetAlarmeForm() {
-    console.log('Réinitialisation formulaire alarme');
-    // À implémenter
-}
-
-function selectAlarmeNok(element, field) {
-    console.log('Sélection OK/NOK alarme:', field);
-    // À implémenter
-}
-
-function selectAlarmeInterventionType(type) {
-    console.log('Sélection type intervention alarme:', type);
-    // À implémenter
-}
-
-// ==================== UI POUR LA GESTION DES DONNÉES ====================
-function addDataManagementUI() {
-    // Ajouter un menu de gestion des données
-    const headerControls = document.querySelector('.header-controls');
-    if (!headerControls) return;
-    
-    const dataMenu = document.createElement('div');
-    dataMenu.className = 'data-management-menu';
-    dataMenu.innerHTML = `
-        <button class="btn btn-sm" onclick="showDataManagementModal()" 
-                title="Gestion des données" aria-label="Gestion données">
-            <i class="fas fa-database"></i>
-        </button>
-    `;
-    
-    headerControls.appendChild(dataMenu);
-}
-
-function showDataManagementModal() {
-    const modalContent = `
-        <div class="modal-body">
-            <div class="data-management-options">
-                <div class="data-option">
-                    <h4><i class="fas fa-save"></i> Sauvegarde</h4>
-                    <button class="btn btn-block" onclick="exportAllDataManual()">
-                        <i class="fas fa-download"></i> Exporter toutes les données
-                    </button>
-                    <button class="btn btn-block" onclick="createBackupNow()">
-                        <i class="fas fa-copy"></i> Créer un backup maintenant
-                    </button>
-                    <small>Dernière sauvegarde: <span id="last-backup-time">${getLastBackupTime()}</span></small>
-                </div>
-                
-                <div class="data-option">
-                    <h4><i class="fas fa-upload"></i> Restauration</h4>
-                    <button class="btn btn-block" onclick="triggerImport()">
-                        <i class="fas fa-upload"></i> Importer des données
-                    </button>
-                    <button class="btn btn-block" onclick="showBackupList()">
-                        <i class="fas fa-history"></i> Voir les backups
-                    </button>
-                </div>
-                
-                <div class="data-option">
-                    <h4><i class="fas fa-sync"></i> Synchronisation</h4>
-                    <div class="sync-status">
-                        <span>Statut: <span id="sync-status-indicator">${AppState.isOnline ? '🟢 En ligne' : '🔴 Hors ligne'}</span></span>
-                        <br>
-                        <span>Éléments en attente: <span id="sync-queue-count">0</span></span>
-                    </div>
-                    <button class="btn btn-block" onclick="forceSync()" ${!AppState.isOnline ? 'disabled' : ''}>
-                        <i class="fas fa-sync"></i> Forcer la synchronisation
-                    </button>
-                </div>
-                
-                <div class="data-option">
-                    <h4><i class="fas fa-database"></i> Stockage</h4>
-                    <div class="storage-info">
-                        <span>Méthode: <strong>IndexedDB + localStorage</strong></span>
-                        <br>
-                        <span>Résilience: <strong>Haute</strong></span>
-                        <br>
-                        <span>Données hors ligne: <strong>Activé</strong></span>
-                    </div>
-                    <button class="btn btn-block btn-danger" onclick="showClearDataConfirm()">
-                        <i class="fas fa-trash"></i> Effacer toutes les données
-                    </button>
-                </div>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-danger" onclick="closeModal('data-management-modal')">
-                <i class="fas fa-times"></i> Fermer
-            </button>
-        </div>
-    `;
-    
-    showCustomModal('data-management-modal', 'Gestion des données', modalContent);
-}
-
-// Fonctions utilitaires pour l'UI
-function exportAllDataManual() {
-    const importExportManager = new ImportExportManager();
-    importExportManager.exportAllData(false);
-}
-
-function createBackupNow() {
-    const importExportManager = new ImportExportManager();
-    importExportManager.exportAllData(true).then(() => {
-        showSuccess('Backup créé avec succès');
-    });
-}
-
-function triggerImport() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            const importExportManager = new ImportExportManager();
-            importExportManager.importData(file);
-        }
-    };
-    input.click();
-}
-
-function forceSync() {
-    const offlineManager = new OfflineManager();
-    offlineManager.syncAll().then(() => {
-        showSuccess('Synchronisation forcée démarrée');
-    });
-}
-
-function getLastBackupTime() {
-    const lastBackup = localStorage.getItem('last_auto_export');
-    return lastBackup ? new Date(lastBackup).toLocaleString('fr-FR') : 'Jamais';
-}
-
-function showCustomModal(id, title, content) {
-    let modal = document.getElementById(id);
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = id;
-        modal.className = 'modal';
-        modal.innerHTML = `
-            <div class="modal-content">
-                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 1.2rem; border-bottom: 2px solid var(--danger); background: linear-gradient(135deg, #ffffff 0%, #fff5f5 100%);">
-                    <h3 style="margin: 0; color: var(--danger); font-size: 1.4rem; display: flex; align-items: center; gap: 10px;">
-                        <i class="fas fa-database" style="color: var(--danger);"></i>
-                        ${title}
-                    </h3>
-                    <button class="btn btn-danger btn-sm" onclick="closeModal('${id}')" 
-                            style="display: flex; align-items: center; gap: 5px; padding: 0.5rem 1rem; font-weight: 600;">
-                        <i class="fas fa-times"></i> Fermer
-                    </button>
-                </div>
-                ${content}
-            </div>
-        `;
-        document.body.appendChild(modal);
-    }
-    modal.classList.add('active');
-}
-// ==================== CSS ADDITIONNEL ====================
-function addDataManagementCSS() {
-    const style = document.createElement('style');
-    style.textContent = `
-        /* Indicateur hors ligne */
-        .offline-notification {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background: #f8d7da;
-            color: #721c24;
-            padding: 10px 20px;
-            z-index: 10000;
-            text-align: center;
-            border-bottom: 2px solid #f5c6cb;
-        }
-        
-        .offline-content {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-        }
-        
-        .offline-content i {
-            font-size: 1.2em;
-        }
-        
-        .offline-content button {
-            background: none;
-            border: none;
-            color: #721c24;
-            cursor: pointer;
-            font-size: 1.2em;
-        }
-        
-        /* Indicateur modifications non sauvegardées */
-        .unsaved-indicator {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #fff3cd;
-            color: #856404;
-            padding: 12px 16px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            z-index: 9999;
-            transform: translateY(100px);
-            opacity: 0;
-            transition: all 0.3s ease;
-        }
-        
-        .unsaved-indicator.visible {
-            transform: translateY(0);
-            opacity: 1;
-        }
-        
-        .unsaved-indicator button {
-            background: #856404;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.9em;
-        }
-        
-        /* Gestion des données */
-        .data-management-menu {
-            display: inline-block;
-            margin-left: 10px;
-        }
-        
-        .data-management-options {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            padding: 20px 0;
-        }
-        
-        .data-option {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #dee2e6;
-        }
-        
-        .data-option h4 {
-            margin-top: 0;
-            color: #2c3e50;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 5px;
-        }
-        
-        .sync-status, .storage-info {
-            background: white;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
-            font-size: 0.9em;
-        }
-        
-        #sync-status-indicator {
-            font-weight: bold;
-        }
-        
-        .online #sync-status-indicator {
-            color: #28a745;
-        }
-        
-        .offline #sync-status-indicator {
-            color: #dc3545;
-        }
-        
-        /* Mode hors ligne */
-        .offline-mode [data-requires-online] {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        /* Statut de connexion */
-        .status-indicator {
-            display: inline-block;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.8em;
-            font-weight: bold;
-        }
-        
-        .status-indicator.online {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .status-indicator.offline {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        /* Erreurs de sauvegarde */
-        .save-error-notification {
-            position: fixed;
-            bottom: 20px;
-            left: 20px;
-            background: #f8d7da;
-            color: #721c24;
-            padding: 12px 16px;
-            border-radius: 8px;
-            border: 1px solid #f5c6cb;
-            z-index: 10000;
-            max-width: 400px;
-        }
-        
-        .error-content {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        
-        .retry-btn {
-            background: #721c24;
-            color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.8em;
-        }
-        
-        /* Responsive */
-        @media (max-width: 768px) {
-            .data-management-options {
-                grid-template-columns: 1fr;
-            }
-            
-            .unsaved-indicator {
-                left: 20px;
-                right: 20px;
-                bottom: 10px;
-            }
-        }
-    `;
-    document.head.appendChild(style);
-}
-
-// ==================== FONCTIONS D'UTILITÉ SUPPLÉMENTAIRES ====================
-function showLoading(message) {
-    let loading = document.getElementById('loading-overlay');
-    if (!loading) {
-        loading = document.createElement('div');
-        loading.id = 'loading-overlay';
-        loading.className = 'loading-overlay';
-        loading.innerHTML = `
-            <div class="loading-content">
-                <div class="spinner"></div>
-                <p>${message || 'Chargement...'}</p>
-            </div>
-        `;
-        document.body.appendChild(loading);
-    }
-    loading.classList.add('active');
-}
-
-function closeLoading() {
-    const loading = document.getElementById('loading-overlay');
-    if (loading) {
-        loading.classList.remove('active');
-        setTimeout(() => {
-            if (loading.parentElement) {
-                loading.remove();
-            }
-        }, 300);
-    }
-}
-
-function showDataStats() {
-    setTimeout(async () => {
-        const stats = await dbManager.getStats();
-        const message = `
-            📊 Statistiques données:
-            • ${stats.clients || 0} client(s)
-            • ${stats.materials || 0} matériel(s)
-            • ${stats.interventions || 0} intervention(s)
-            • ${stats.factures || 0} facture(s)
-            • ${stats.syncQueue || 0} élément(s) en attente de sync
-        `;
-        console.log(message);
-    }, 1000);
-}
-
-// ==================== DÉBOGAGE ====================
-console.log('🚀 FireCheck Pro - Initialisation...');
-
-// Vérifier si les fonctions existent
-if (typeof loadFromStorage === 'undefined') {
-    console.log('⚠️ loadFromStorage non définie, création...');
-    
-    // Définir les fonctions manquantes
-    window.loadFromStorage = function(key) {
-        try {
-            const item = localStorage.getItem(key);
-            return item ? JSON.parse(item) : null;
-        } catch (error) {
-            console.error('Erreur loadFromStorage:', error);
-            return null;
-        }
-    };
-    
-    window.saveToStorage = function(key, data) {
-        try {
-            localStorage.setItem(key, JSON.stringify(data));
-            return true;
-        } catch (error) {
-            console.error('Erreur saveToStorage:', error);
-            return false;
-        }
-    };
-}
-
-// ==================== FONCTIONS D'OUVERTURE DES MODALS ====================
-
+// ==================== FONCTIONS MANQUANTES ====================
 function openAddExtincteurModal() {
-    console.log('Ouverture modal extincteur');
     const modal = document.getElementById('add-extincteur-modal');
     if (modal) {
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
-    } else {
-        console.error('Modal extincteur non trouvé');
     }
 }
 
 function openAddRIAModal() {
-    console.log('Ouverture modal RIA');
     const modal = document.getElementById('add-ria-modal');
     if (modal) {
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
-    } else {
-        console.error('Modal RIA non trouvé');
     }
 }
 
 function openAddBAESModal() {
-    console.log('Ouverture modal BAES');
     const modal = document.getElementById('add-baes-modal');
     if (modal) {
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
-    } else {
-        console.error('Modal BAES non trouvé');
     }
 }
 
 function openAddAlarmeModal() {
-    console.log('Ouverture modal alarme');
     const modal = document.getElementById('add-alarme-modal');
     if (modal) {
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
-    } else {
-        console.error('Modal alarme non trouvé');
     }
 }
-
-// ==================== FONCTIONS DE FERMETURE DES MODALS ====================
 
 function closeExtincteurModal() {
     const modal = document.getElementById('add-extincteur-modal');
@@ -4667,176 +3231,2224 @@ function closeFacture() {
     }
 }
 
-function closeSuccessModal() {
-    const modal = document.getElementById('success-modal');
-    if (modal) {
-        modal.classList.remove('active');
-        document.body.style.overflow = '';
+// ==================== GESTION DES DONNÉES UI ====================
+function addDataManagementUI() {
+    const headerControls = document.querySelector('.header-controls');
+    if (!headerControls) return;
+    
+    const dataMenu = document.createElement('div');
+    dataMenu.className = 'data-management-menu';
+    dataMenu.innerHTML = `
+        <button class="btn btn-sm" onclick="showDataManagementModal()" 
+                title="Gestion des données">
+            <i class="fas fa-database"></i>
+        </button>
+    `;
+    
+    headerControls.appendChild(dataMenu);
+}
+
+function showDataManagementModal() {
+    const modalContent = `
+        <div class="modal-body">
+            <div class="data-management-options">
+                <div class="data-option">
+                    <h4><i class="fas fa-save"></i> Sauvegarde</h4>
+                    <button class="btn btn-block" onclick="exportAllDataManual()">
+                        <i class="fas fa-download"></i> Exporter toutes les données
+                    </button>
+                    <button class="btn btn-block" onclick="createBackupNow()">
+                        <i class="fas fa-copy"></i> Créer un backup maintenant
+                    </button>
+                </div>
+                
+                <div class="data-option">
+                    <h4><i class="fas fa-upload"></i> Restauration</h4>
+                    <button class="btn btn-block" onclick="triggerImport()">
+                        <i class="fas fa-upload"></i> Importer des données
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-danger" onclick="closeModal('data-management-modal')">
+                <i class="fas fa-times"></i> Fermer
+            </button>
+        </div>
+    `;
+    
+    showCustomModal('data-management-modal', 'Gestion des données', modalContent);
+}
+
+function showCustomModal(id, title, content) {
+    let modal = document.getElementById(id);
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = id;
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 1.2rem; border-bottom: 2px solid var(--danger); background: linear-gradient(135deg, #ffffff 0%, #fff5f5 100%);">
+                    <h3 style="margin: 0; color: var(--danger); font-size: 1.4rem; display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-database" style="color: var(--danger);"></i>
+                        ${title}
+                    </h3>
+                    <button class="btn btn-danger btn-sm" onclick="closeModal('${id}')" 
+                            style="display: flex; align-items: center; gap: 5px; padding: 0.5rem 1rem; font-weight: 600;">
+                        <i class="fas fa-times"></i> Fermer
+                    </button>
+                </div>
+                ${content}
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    modal.classList.add('active');
+}
+
+function exportAllDataManual() {
+    const importExportManager = new ImportExportManager();
+    importExportManager.exportAllData(false);
+}
+
+function createBackupNow() {
+    const importExportManager = new ImportExportManager();
+    importExportManager.exportAllData(true).then(() => {
+        showSuccess('Backup créé avec succès');
+    });
+}
+
+function triggerImport() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const importExportManager = new ImportExportManager();
+            importExportManager.importData(file);
+        }
+    };
+    input.click();
+}
+
+// ==================== CSS ADDITIONNEL ====================
+function addDataManagementCSS() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .offline-notification {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px 20px;
+            z-index: 10000;
+            text-align: center;
+            border-bottom: 2px solid #f5c6cb;
+        }
+        
+        .offline-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .offline-content button {
+            background: none;
+            border: none;
+            color: #721c24;
+            cursor: pointer;
+            font-size: 1.2em;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        
+        .status-indicator.online {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-indicator.offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .data-management-menu {
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .data-management-options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 20px 0;
+        }
+        
+        .data-option {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .data-option h4 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+        
+        .sync-status, .storage-info {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 0.9em;
+        }
+        
+        #sync-status-indicator {
+            font-weight: bold;
+        }
+        
+        .online #sync-status-indicator {
+            color: #28a745;
+        }
+        
+        .offline #sync-status-indicator {
+            color: #dc3545;
+        }
+        
+        @media (max-width: 768px) {
+            .data-management-options {
+                grid-template-columns: 1fr;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// ==================== FONCTIONS D'UTILITÉ SUPPLÉMENTAIRES ====================
+function showLoading(message) {
+    let loading = document.getElementById('loading-overlay');
+    if (!loading) {
+        loading = document.createElement('div');
+        loading.id = 'loading-overlay';
+        loading.className = 'loading-overlay';
+        loading.innerHTML = `
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <p>${message || 'Chargement...'}</p>
+            </div>
+        `;
+        document.body.appendChild(loading);
+    }
+    loading.classList.add('active');
+}
+
+function closeLoading() {
+    const loading = document.getElementById('loading-overlay');
+    if (loading) {
+        loading.classList.remove('active');
+        setTimeout(() => {
+            if (loading.parentElement) {
+                loading.remove();
+            }
+        }, 300);
     }
 }
 
-function closeErrorModal() {
-    const modal = document.getElementById('error-modal');
-    if (modal) {
-        modal.classList.remove('active');
-        document.body.style.overflow = '';
-    }
+function showDataStats() {
+    setTimeout(async () => {
+        const stats = await dbManager.getStats();
+        const message = `
+            📊 Statistiques données:
+            • ${stats.clients || 0} client(s)
+            • ${stats.materials || 0} matériel(s)
+            • ${stats.interventions || 0} intervention(s)
+            • ${stats.factures || 0} facture(s)
+        `;
+        console.log(message);
+    }, 1000);
 }
 
-// ==================== CORRECTION DU BUG DES NOTIFICATIONS ====================
-// Solution pour désactiver définitivement les notifications gênantes
-// Version sans bouton STOP BUG - Interface propre
+// ==================== JSPDF FONCTIONS ====================
+let jsPDFLoaded = false;
 
-console.log("🔧 Application du correctif de notifications...");
+function ensureJSPDF() {
+    return new Promise((resolve, reject) => {
+        if (typeof jsPDF !== 'undefined') {
+            jsPDFLoaded = true;
+            resolve(true);
+            return;
+        }
+        
+        console.log('📦 Chargement de jsPDF...');
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        script.integrity = 'sha512-qZvrmS2ekKPF2mSznTQsxqPgnpkI4DNTlrdUmTzrDgektczlKNRRhy5X5AAOnx5S09ydFYWWNSfcEqDTTHgtNA==';
+        script.crossOrigin = 'anonymous';
+        
+        script.onload = () => {
+            console.log('✅ jsPDF chargé avec succès');
+            jsPDFLoaded = true;
+            resolve(true);
+        };
+        
+        script.onerror = (error) => {
+            console.error('❌ Échec du chargement de jsPDF:', error);
+            reject(new Error('Impossible de charger jsPDF'));
+        };
+        
+        document.head.appendChild(script);
+    });
+}
 
-// 1. Désactive complètement l'auto-save dans la config
-CONFIG.autoSave.enabled = false;
-CONFIG.autoSave.onUnload = false;
-
-// 2. Remplace le gestionnaire par une version silencieuse
-class SilentAutoSaveManager {
-    constructor() {
-        console.log("✅ Mode silencieux activé - Pas de notifications");
-    }
-    
-    init() { 
-        // Ne rien faire
-    }
-    
-    setupChangeDetection() { 
-        // Ne pas écouter les changements
-    }
-    
-    markUnsavedChanges() { 
-        // Ne pas marquer de changements
-        AppState.unsavedChanges = false;
-    }
-    
-    showUnsavedIndicator() { 
-        // Ne pas montrer d'indicateur
-    }
-    
-    hideUnsavedIndicator() { 
-        // Supprime l'indicateur s'il existe
-        const indicator = document.getElementById('unsaved-changes-indicator');
-        if (indicator && indicator.parentElement) {
-            indicator.remove();
+// ==================== FONCTIONS DE VÉRIFICATION DE CONFORMITÉ ====================
+function isExtincteurConforme(material) {
+    // Vérifier l'âge
+    if (material.annee) {
+        const currentYear = new Date().getFullYear();
+        const age = currentYear - parseInt(material.annee);
+        if (age >= 10) {
+            return false;
         }
     }
     
-    saveAllData() { 
-        // Sauvegarde silencieuse
-        console.log("💾 Sauvegarde silencieuse");
-        return Promise.resolve();
+    // Vérifier les observations pour "non conforme"
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
     }
     
-    saveAppState() { 
-        return Promise.resolve();
+    // Vérifier les champs OK/NOK
+    const champsVerification = [
+        'etatGeneral',
+        'lisibilite',
+        'panneau',
+        'goupille',
+        'pression',
+        'joints',
+        'accessibilite'
+    ];
+    
+    for (const champ of champsVerification) {
+        if (material[champ] === 'Non OK') {
+            return false;
+        }
     }
     
-    loadAppState() { 
-        return Promise.resolve();
+    return true;
+}
+
+function isRIAConforme(material) {
+    // Vérifier les observations pour "non conforme"
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
     }
     
-    showSaveError() { 
-        // Ne pas montrer d'erreurs
+    // Vérifier les champs OK/NOK
+    const champsVerification = [
+        'etatGeneral',
+        'lisibilite',
+        'panneau',
+        'accessibilite'
+    ];
+    
+    for (const champ of champsVerification) {
+        if (material[champ] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function isBAESConforme(material) {
+    // Vérifier les observations pour "non conforme"
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    // Vérifier les champs OK/NOK
+    const champsVerification = [
+        'etatGeneral',
+        'fonctionnement',
+        'chargeur',
+        'accessibilite'
+    ];
+    
+    for (const champ of champsVerification) {
+        if (material[champ] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function isAlarmeConforme(material) {
+    // Vérifier les observations pour "non conforme"
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    // Vérifier les champs de vérification
+    if (!material.batterie || !material.fonctionnement || !material.accessibilite) {
+        return false;
+    }
+    
+    return true;
+}
+
+// ==================== GÉNÉRATION RAPPORT PDF OPTIMISÉ ====================
+async function generatePDFReport() {
+    console.log('🔄 Début génération rapport PDF optimisé...');
+    
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    const materials = AppState.currentClient.materials?.filter(m => m.verified) || [];
+    
+    if (materials.length === 0) {
+        showError('Aucun matériel vérifié à exporter');
+        return;
+    }
+    
+    showLoading('Génération du rapport PDF en cours...');
+    
+    try {
+        await ensureJSPDF();
+        
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+        
+        // ============== CONFIGURATIONS ==============
+        const margin = 15;
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const contentWidth = pageWidth - (2 * margin);
+        let currentY = margin;
+        
+        // ============== FONCTIONS UTILITAIRES ==============
+        const addText = (text, x, y, fontSize = 10, style = 'normal', align = 'left', color = [0, 0, 0]) => {
+            doc.setFontSize(fontSize);
+            doc.setFont('helvetica', style);
+            doc.setTextColor(color[0], color[1], color[2]);
+            doc.text(text, x, y, { align: align });
+        };
+        
+        const addLine = (y, color = [200, 200, 200], width = 1) => {
+            doc.setDrawColor(color[0], color[1], color[2]);
+            doc.setLineWidth(width);
+            doc.line(margin, y, pageWidth - margin, y);
+        };
+        
+        const addBox = (x, y, width, height, fillColor = null, strokeColor = [0, 0, 0]) => {
+            if (fillColor) {
+                doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+                doc.rect(x, y, width, height, 'F');
+            }
+            doc.setDrawColor(strokeColor[0], strokeColor[1], strokeColor[2]);
+            doc.rect(x, y, width, height, 'S');
+        };
+        
+        // ============== EN-TÊTE ==============
+        addText('RAPPORT DE VÉRIFICATION ANNUEL', margin, currentY, 20, 'bold', 'left', [26, 54, 93]);
+        currentY += 10;
+        
+        addText('Vérification des équipements de sécurité incendie', margin, currentY, 14, 'normal', 'left', [44, 62, 80]);
+        currentY += 8;
+        
+        // Date et référence
+        const today = new Date().toLocaleDateString('fr-FR');
+        addText(`Date: ${today}`, margin, currentY, 10);
+        addText(`Référence: RAP-${new Date().getFullYear()}-${AppState.currentClient.id?.substr(0, 8) || '000000'}`, pageWidth - margin, currentY, 10, 'normal', 'right');
+        currentY += 10;
+        
+        addLine(currentY);
+        currentY += 5;
+        
+        // ============== INFORMATIONS CLIENT ==============
+        addText('INFORMATIONS CLIENT', margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
+        currentY += 8;
+        
+        const client = AppState.currentClient;
+        const technician = getElementValue('technician-name') || 'Technicien';
+        
+        addText(`Nom: ${escapeHtml(client.name)}`, margin, currentY, 10);
+        currentY += 5;
+        addText(`Contact: ${escapeHtml(client.contact)}`, margin, currentY, 10);
+        currentY += 5;
+        addText(`Adresse: ${escapeHtml(client.address)}`, margin, currentY, 10);
+        currentY += 5;
+        addText(`Technicien: ${escapeHtml(technician)}`, margin, currentY, 10);
+        currentY += 5;
+        
+        // Registre de sécurité
+        const registreSecurite = getElementValue('registre-securite');
+        if (registreSecurite) {
+            const statutRegistre = registreSecurite === 'oui' ? 'Signé et conforme' : 
+                                  registreSecurite === 'non' ? 'Non signé' : 'Indisponible';
+            addText(`Registre de sécurité: ${statutRegistre}`, margin, currentY, 10);
+            currentY += 5;
+        }
+        
+        currentY += 10;
+        
+        // ============== ÉTAT GLOBAL DE CONFORMITÉ ==============
+        // Calculer les statistiques
+        const materialsByType = groupMaterialsByType(materials);
+        let totalConforme = 0;
+        let totalNonConforme = 0;
+        const nonConformesParType = {};
+        
+        Object.entries(materialsByType).forEach(([type, items]) => {
+            const conformeCount = items.filter(m => {
+                switch(type) {
+                    case 'extincteur': return isExtincteurConforme(m);
+                    case 'ria': return isRIAConforme(m);
+                    case 'baes': return isBAESConforme(m);
+                    case 'alarme': return isAlarmeConforme(m);
+                    default: return true;
+                }
+            }).length;
+            const nonConformeCount = items.length - conformeCount;
+            
+            totalConforme += conformeCount;
+            totalNonConforme += nonConformeCount;
+            
+            if (nonConformeCount > 0) {
+                nonConformesParType[type] = nonConformeCount;
+            }
+        });
+        
+        // Affichage sobre de l'état de conformité
+        const isGlobalConforme = totalNonConforme === 0;
+        const conformiteText = isGlobalConforme ? 'ÉTAT CONFORME' : 'ÉTAT NON CONFORME';
+        const conformiteColor = isGlobalConforme ? [50, 168, 82] : [220, 53, 69];
+        
+        addText(conformiteText, pageWidth / 2, currentY, 16, 'bold', 'center', conformiteColor);
+        currentY += 8;
+        
+        const sousTitre = isGlobalConforme 
+            ? `Tous les ${materials.length} matériels vérifiés sont conformes`
+            : `${totalNonConforme} matériel(s) non conforme(s) sur ${materials.length}`;
+        addText(sousTitre, pageWidth / 2, currentY, 12, 'normal', 'center', [73, 80, 87]);
+        
+        currentY += 15;
+        
+        // ============== RÉSUMÉ STATISTIQUES ==============
+        addText('SYNTHÈSE DES VÉRIFICATIONS', margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
+        currentY += 8;
+        
+        // Tableau de statistiques simple
+        const statX = margin;
+        const statWidth = contentWidth / 4;
+        
+        // Total matériels
+        addBox(statX, currentY, statWidth, 20, [248, 249, 250]);
+        addText('TOTAL', statX + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
+        addText(materials.length.toString(), statX + statWidth/2, currentY + 15, 16, 'bold', 'center', [26, 54, 93]);
+        
+        // Conformes
+        addBox(statX + statWidth, currentY, statWidth, 20, [232, 245, 233]);
+        addText('CONFORMES', statX + statWidth + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
+        addText(totalConforme.toString(), statX + statWidth + statWidth/2, currentY + 15, 16, 'bold', 'center', [50, 168, 82]);
+        
+        // Non conformes
+        addBox(statX + statWidth*2, currentY, statWidth, 20, [248, 215, 218]);
+        addText('NON CONFORMES', statX + statWidth*2 + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
+        addText(totalNonConforme.toString(), statX + statWidth*2 + statWidth/2, currentY + 15, 16, 'bold', 'center', [220, 53, 69]);
+        
+        // Taux de conformité
+        const taux = materials.length > 0 ? Math.round((totalConforme / materials.length) * 100) : 0;
+        addBox(statX + statWidth*3, currentY, statWidth, 20, [220, 237, 253]);
+        addText('TAUX', statX + statWidth*3 + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
+        addText(`${taux}%`, statX + statWidth*3 + statWidth/2, currentY + 15, 16, 'bold', 'center', [13, 110, 253]);
+        
+        currentY += 25;
+        
+        // ============== DÉTAIL PAR TYPE ==============
+        currentY += 5;
+        
+        Object.entries(materialsByType).forEach(([type, items]) => {
+            if (items.length === 0) return;
+            
+            // Nouvelle page si nécessaire
+            if (currentY > pageHeight - 60) {
+                doc.addPage();
+                currentY = margin;
+            }
+            
+            const materialInfo = getMaterialInfo(type);
+            const conformeCount = items.filter(m => {
+                switch(type) {
+                    case 'extincteur': return isExtincteurConforme(m);
+                    case 'ria': return isRIAConforme(m);
+                    case 'baes': return isBAESConforme(m);
+                    case 'alarme': return isAlarmeConforme(m);
+                    default: return true;
+                }
+            }).length;
+            const nonConformeCount = items.length - conformeCount;
+            const isTypeConforme = nonConformeCount === 0;
+            
+            // En-tête de type
+            addText(`${materialInfo.text.toUpperCase()}`, margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
+            
+            // Badge de conformité pour le type
+            const typeConformiteColor = isTypeConforme ? [50, 168, 82] : [220, 53, 69];
+            const typeConformiteText = isTypeConforme ? 'Conforme' : `${nonConformeCount} non conforme(s)`;
+            
+            addText(typeConformiteText, pageWidth - margin, currentY, 10, 'bold', 'right', typeConformiteColor);
+            currentY += 7;
+            
+            addText(`${items.length} matériel(s) vérifié(s)`, margin, currentY, 10, 'normal', 'left', [108, 117, 125]);
+            currentY += 5;
+            
+            // Tableau détaillé
+            const headers = ['ID', 'Localisation', 'Type/Modèle', 'Année', 'Date vérif.', 'État'];
+            const colWidths = [20, 35, 30, 15, 20, 30];
+            
+            // En-têtes du tableau
+            doc.setFillColor(26, 54, 93);
+            doc.setTextColor(255, 255, 255);
+            doc.setFont('helvetica', 'bold');
+            
+            let xPos = margin;
+            headers.forEach((header, i) => {
+                doc.rect(xPos, currentY, colWidths[i], 8, 'F');
+                addText(header, xPos + colWidths[i]/2, currentY + 5, 9, 'bold', 'center', [255, 255, 255]);
+                xPos += colWidths[i];
+            });
+            
+            currentY += 8;
+            doc.setTextColor(0, 0, 0);
+            doc.setFont('helvetica', 'normal');
+            
+            // Données du tableau
+            items.forEach((material, index) => {
+                if (currentY > pageHeight - 20) {
+                    doc.addPage();
+                    currentY = margin;
+                    
+                    // Redessiner les en-têtes
+                    doc.setFillColor(26, 54, 93);
+                    doc.setTextColor(255, 255, 255);
+                    doc.setFont('helvetica', 'bold');
+                    
+                    xPos = margin;
+                    headers.forEach((header, i) => {
+                        doc.rect(xPos, currentY, colWidths[i], 8, 'F');
+                        addText(header, xPos + colWidths[i]/2, currentY + 5, 9, 'bold', 'center', [255, 255, 255]);
+                        xPos += colWidths[i];
+                    });
+                    
+                    currentY += 8;
+                    doc.setTextColor(0, 0, 0);
+                    doc.setFont('helvetica', 'normal');
+                }
+                
+                // Déterminer si conforme
+                let isConforme = true;
+                let conformiteText = 'CONFORME';
+                let conformiteColor = [50, 168, 82];
+                let raisonNonConforme = '';
+                
+                switch(type) {
+                    case 'extincteur':
+                        isConforme = isExtincteurConforme(material);
+                        if (material.annee) {
+                            const age = new Date().getFullYear() - parseInt(material.annee);
+                            if (age >= 10) {
+                                isConforme = false;
+                                raisonNonConforme = 'Âge > 10 ans';
+                            }
+                        }
+                        break;
+                    case 'ria':
+                        isConforme = isRIAConforme(material);
+                        break;
+                    case 'baes':
+                        isConforme = isBAESConforme(material);
+                        break;
+                    case 'alarme':
+                        isConforme = isAlarmeConforme(material);
+                        break;
+                }
+                
+                if (!isConforme && conformiteText === 'CONFORME') {
+                    conformiteText = 'NON CONFORME';
+                    conformiteColor = [220, 53, 69];
+                }
+                
+                // Vérifier les observations
+                if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+                    isConforme = false;
+                    conformiteText = 'NON CONFORME';
+                    conformiteColor = [220, 53, 69];
+                    if (!raisonNonConforme) raisonNonConforme = 'Observations';
+                }
+                
+                // Ligne de données
+                const rowData = [
+                    material.id || material.numero || 'N/A',
+                    material.localisation || material.location || 'Non spécifié',
+                    material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || '',
+                    material.annee || '',
+                    formatDate(material.dateVerification),
+                    conformiteText
+                ];
+                
+                // Alterner les couleurs de fond
+                if (index % 2 === 0) {
+                    doc.setFillColor(248, 249, 250);
+                    doc.rect(margin, currentY, contentWidth, 7, 'F');
+                }
+                
+                // Écrire les données
+                xPos = margin;
+                rowData.forEach((data, i) => {
+                    const textColor = i === 5 ? conformiteColor : [0, 0, 0];
+                    addText(data.toString(), xPos + 2, currentY + 4.5, 8, i === 5 ? 'bold' : 'normal', 'left', textColor);
+                    xPos += colWidths[i];
+                });
+                
+                currentY += 7;
+            });
+            
+            currentY += 10;
+        });
+        
+        // ============== OBSERVATIONS ET RECOMMANDATIONS ==============
+        if (currentY > pageHeight - 100) {
+            doc.addPage();
+            currentY = margin;
+        }
+        
+        addText('OBSERVATIONS ET RECOMMANDATIONS', margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
+        currentY += 8;
+        
+        if (totalNonConforme > 0) {
+            addText(`⚠️ ${totalNonConforme} matériel(s) nécessite(nt) une attention particulière.`, margin, currentY, 11, 'bold', 'left', [220, 53, 69]);
+            currentY += 6;
+            
+            // Lister les matériels non conformes
+            Object.entries(nonConformesParType).forEach(([type, count]) => {
+                const typeInfo = getMaterialInfo(type);
+                addText(`• ${count} ${typeInfo.text.toLowerCase()}(s)`, margin + 10, currentY, 10);
+                currentY += 5;
+            });
+            
+            currentY += 5;
+            addText('Recommandations:', margin, currentY, 11, 'bold', 'left', [26, 54, 93]);
+            currentY += 6;
+            addText('1. Procéder au remplacement ou à la réparation des matériels non conformes', margin + 10, currentY, 10);
+            currentY += 5;
+            addText('2. Vérifier l\'accessibilité et la signalisation des équipements', margin + 10, currentY, 10);
+            currentY += 5;
+            addText('3. Mettre à jour le registre de sécurité incendie', margin + 10, currentY, 10);
+            currentY += 5;
+        } else {
+            addText('✅ Tous les équipements vérifiés sont conformes aux normes en vigueur.', margin, currentY, 11, 'normal', 'left', [50, 168, 82]);
+            currentY += 6;
+            addText('Aucune intervention corrective n\'est nécessaire.', margin, currentY, 10);
+            currentY += 5;
+        }
+        
+        currentY += 10;
+        
+        // ============== VALIDITÉ ET SIGNATURES ==============
+        // Nouvelle page pour les signatures
+        doc.addPage();
+        currentY = margin;
+        
+        addText('VALIDATION DU RAPPORT', margin, currentY, 16, 'bold', 'center', [26, 54, 93]);
+        currentY += 20;
+        
+        // Validité
+        addText('VALIDITÉ DU RAPPORT', margin, currentY, 12, 'bold', 'left', [26, 54, 93]);
+        currentY += 7;
+        addText(`Ce rapport est valable 12 mois à compter de la date de vérification.`, margin, currentY, 10);
+        currentY += 5;
+        addText(`Date de la prochaine vérification recommandée: ${getNextVerificationDate()}`, margin, currentY, 10);
+        currentY += 15;
+        
+        // Signature technicien
+        addText('LE TECHNICIEN', margin, currentY, 12, 'bold', 'left', [26, 54, 93]);
+        currentY += 7;
+        addText(technician, margin, currentY, 10);
+        currentY += 15;
+        
+        // Ligne de signature
+        addLine(currentY, [0, 0, 0]);
+        addText('Signature et cachet', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
+        currentY += 20;
+        
+        // Signature client
+        addText('LE CLIENT', margin, currentY, 12, 'bold', 'left', [26, 54, 93]);
+        currentY += 7;
+        addText(client.name, margin, currentY, 10);
+        currentY += 15;
+        
+        // Ligne de signature
+        addLine(currentY, [0, 0, 0]);
+        addText('Signature', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
+        currentY += 20;
+        
+        // Note légale
+        addText('NOTE LÉGALE', margin, currentY, 10, 'bold', 'left', [73, 80, 87]);
+        currentY += 6;
+        addText('Ce document certifie la vérification des équipements conformément à la norme APSAD R4.', margin, currentY, 9, 'italic', 'left', [108, 117, 125]);
+        currentY += 4;
+        addText('Toute reproduction ou modification non autorisée est interdite.', margin, currentY, 9, 'italic', 'left', [108, 117, 125]);
+        
+        // ============== SAUVEGARDE ==============
+        const filename = `Rapport_${client.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+        doc.save(filename);
+        
+        closeLoading();
+        showSuccess('Rapport PDF généré avec succès !');
+        
+    } catch (error) {
+        console.error('❌ Erreur génération rapport PDF:', error);
+        closeLoading();
+        showError('Erreur lors de la génération du rapport: ' + error.message);
     }
 }
 
-// 3. Remplace l'instance problématique
-AutoSaveManager.instance = new SilentAutoSaveManager();
+function getNextVerificationDate() {
+    const nextYear = new Date();
+    nextYear.setFullYear(nextYear.getFullYear() + 1);
+    return formatDate(nextYear.toISOString());
+}
 
-// 4. Nettoie immédiatement les notifications existantes
-function cleanExistingNotifications() {
-    // Supprime l'indicateur de modifications
-    const unsavedIndicator = document.getElementById('unsaved-changes-indicator');
-    if (unsavedIndicator && unsavedIndicator.parentElement) {
-        unsavedIndicator.remove();
-        console.log("🗑️ Indicateur 'modifications non sauvegardées' supprimé");
-    }
+function groupMaterialsByType(materials) {
+    const grouped = {
+        extincteur: [],
+        ria: [],
+        baes: [],
+        alarme: []
+    };
     
-    // Supprime les notifications d'erreur
-    const errorNotifications = document.querySelectorAll('.save-error-notification');
-    errorNotifications.forEach(el => {
-        if (el.parentElement) {
-            el.remove();
+    materials.forEach(material => {
+        if (grouped[material.type]) {
+            grouped[material.type].push(material);
         }
     });
     
-    if (errorNotifications.length > 0) {
-        console.log(`🗑️ ${errorNotifications.length} notification(s) d'erreur supprimée(s)`);
-    }
-    
-    // Supprime l'écouteur beforeunload
-    window.onbeforeunload = null;
-    
-    // Réinitialise l'état
-    AppState.unsavedChanges = false;
+    return grouped;
 }
 
-// 5. Exécute le nettoyage au démarrage
-document.addEventListener('DOMContentLoaded', function() {
-    // Nettoie après un petit délai
-    setTimeout(cleanExistingNotifications, 500);
-    
-    // Nettoie aussi quand on navigue
-    const originalNavigateTo = window.navigateTo;
-    if (typeof originalNavigateTo === 'function') {
-        window.navigateTo = function(page) {
-            cleanExistingNotifications();
-            return originalNavigateTo(page);
-        };
+// ==================== IMPORT/EXPORT ====================
+class ImportExportManager {
+    async exportAllData(silent = false) {
+        try {
+            const clients = await dbManager.getAll('clients');
+            const interventions = await dbManager.getAll('interventions');
+            const factures = await dbManager.getAll('factures');
+            
+            const exportData = {
+                metadata: {
+                    exportDate: new Date().toISOString(),
+                    version: '2.0',
+                    recordCounts: {
+                        clients: clients.length,
+                        interventions: interventions.length,
+                        factures: factures.length
+                    }
+                },
+                data: {
+                    clients: clients,
+                    interventions: interventions,
+                    factures: factures
+                }
+            };
+            
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+                type: 'application/json' 
+            });
+            
+            const url = URL.createObjectURL(blob);
+            const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const filename = `firecheck_backup_${timestamp}_${Date.now()}.json`;
+            
+            await dbManager.save('settings', {
+                id: `backup_${timestamp}`,
+                data: exportData,
+                timestamp: new Date().toISOString()
+            });
+            
+            if (!silent) {
+                this.downloadFile(url, filename);
+            }
+            
+            this.cleanOldBackups();
+            
+            if (!silent) {
+                showSuccess(`Backup créé: ${filename}`);
+            }
+            
+            return exportData;
+            
+        } catch (error) {
+            console.error('Erreur export:', error);
+            if (!silent) {
+                showError('Erreur lors de la création du backup');
+            }
+            throw error;
+        }
     }
     
-    console.log("✅ Correctif appliqué avec succès");
-});
-
-// 6. S'assure que les sauvegardes manuelles fonctionnent toujours
-window.saveClients = async function() {
-    if (AppState.clients.length > 0) {
-        await dbManager.saveAll('clients', AppState.clients);
-        console.log(`💾 ${AppState.clients.length} client(s) sauvegardé(s)`);
+    async importData(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            
+            reader.onload = async (event) => {
+                try {
+                    const importData = JSON.parse(event.target.result);
+                    
+                    if (!this.validateImportData(importData)) {
+                        throw new Error('Format de fichier invalide');
+                    }
+                    
+                    if (!confirm(this.getImportConfirmationMessage(importData))) {
+                        reject(new Error('Import annulé'));
+                        return;
+                    }
+                    
+                    await this.createPreImportBackup();
+                    await this.processImport(importData);
+                    await this.reloadAppAfterImport();
+                    
+                    showSuccess('Import réussi !');
+                    resolve();
+                    
+                } catch (error) {
+                    console.error('Erreur import:', error);
+                    showError(`Erreur import: ${error.message}`);
+                    reject(error);
+                }
+            };
+            
+            reader.onerror = () => {
+                reject(new Error('Erreur de lecture du fichier'));
+            };
+            
+            reader.readAsText(file);
+        });
     }
-};
-
-window.saveInterventions = async function() {
-    if (AppState.currentInterventions.length > 0) {
-        await dbManager.saveAll('interventions', AppState.currentInterventions);
-        console.log(`💾 ${AppState.currentInterventions.length} intervention(s) sauvegardée(s)`);
+    
+    validateImportData(data) {
+        return data && data.metadata && data.data && Array.isArray(data.data.clients);
     }
-};
+    
+    getImportConfirmationMessage(data) {
+        const counts = data.metadata.recordCounts;
+        return `Voulez-vous importer :
+• ${counts.clients || 0} client(s)
+• ${counts.interventions || 0} intervention(s)
+• ${counts.factures || 0} facture(s)
 
-// 7. Nettoie aussi au chargement de la page
-window.addEventListener('load', function() {
-    setTimeout(cleanExistingNotifications, 1000);
-});
+⚠️ Cela écrasera vos données existantes.`;
+    }
+    
+    async createPreImportBackup() {
+        const backup = await this.exportAllData(true);
+        await dbManager.save('settings', {
+            id: 'pre_import_backup',
+            data: backup,
+            timestamp: new Date().toISOString()
+        });
+    }
+    
+    async processImport(importData) {
+        await dbManager.clearStore('clients');
+        await dbManager.clearStore('interventions');
+        await dbManager.clearStore('factures');
+        
+        if (importData.data.clients.length > 0) {
+            await dbManager.saveAll('clients', importData.data.clients);
+        }
+        
+        if (importData.data.interventions.length > 0) {
+            await dbManager.saveAll('interventions', importData.data.interventions);
+        }
+        
+        if (importData.data.factures.length > 0) {
+            await dbManager.saveAll('factures', importData.data.factures);
+        }
+        
+        await dbManager.save('settings', {
+            id: 'last_import',
+            data: importData.metadata,
+            timestamp: new Date().toISOString()
+        });
+    }
+    
+    async reloadAppAfterImport() {
+        AppState.clients = await dbManager.getAll('clients');
+        AppState.currentInterventions = await dbManager.getAll('interventions');
+        AppState.currentClient = null;
+        AppState.unsavedChanges = false;
+        
+        if (AppState.currentPage === 'clients') {
+            displayClientsList();
+        }
+        
+        updateClientInfoBadge();
+    }
+    
+    downloadFile(url, filename) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+    }
+    
+    async cleanOldBackups() {
+        const backups = await dbManager.getAll('settings');
+        const backupKeys = backups
+            .filter(item => item.id && item.id.startsWith('backup_'))
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        
+        if (backupKeys.length > 5) {
+            for (let i = 5; i < backupKeys.length; i++) {
+                await dbManager.delete('settings', backupKeys[i].id);
+            }
+        }
+    }
+}
 
-// 8. Redéfinit la fonction problématique de détection
-if (AutoSaveManager.prototype && AutoSaveManager.prototype.setupChangeDetection) {
-    AutoSaveManager.prototype.setupChangeDetection = function() {
-        // Version vide - ne détecte aucun changement
-        console.log("🔇 Détection des changements désactivée");
+// ==================== FONCTIONS DE RIA ====================
+function addRIAToList() {
+    if (!validateMaterialForm('ria')) {
+        return;
+    }
+    
+    const ria = createRIAObject();
+    addMaterialToList(ria);
+    closeModal('add-ria-modal');
+    showSuccess('RIA ajouté avec succès');
+}
+
+function createRIAObject() {
+    return {
+        type: 'ria',
+        id: getElementValue('ria-id'),
+        localisation: getElementValue('ria-location'),
+        typeRIA: getElementValue('ria-type'),
+        diametre: getElementValue('ria-diametre'),
+        longueur: getElementValue('ria-longueur'),
+        pression: getElementValue('ria-pression'),
+        dateControle: getElementValue('ria-date-controle'),
+        prochainControle: getElementValue('ria-prochain-controle'),
+        etatGeneral: getElementValue('ria-etat-general'),
+        etatGeneralComment: getElementValue('ria-etat-general-comment'),
+        lisibilite: getElementValue('ria-lisibilite'),
+        panneau: getElementValue('ria-panneau'),
+        accessibilite: getElementValue('ria-accessibilite'),
+        observations: getElementValue('ria-observations'),
+        interventionType: getElementValue('ria-intervention-type'),
+        photos: [],
+        verified: false,
+        dateVerification: null
     };
 }
 
-console.log("✨ Correctif de notifications installé avec succès !");
-
-// Vérifier que localStorage est disponible
-if (typeof localStorage === 'undefined') {
-    console.error('❌ localStorage non disponible');
-    alert('Attention: Votre navigateur ne supporte pas le stockage local. Certaines fonctionnalités seront limitées.');
+function resetRIAForm() {
+    const today = new Date().toISOString().split('T')[0];
+    const nextYear = new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0];
+    
+    setElementValue('ria-id', '');
+    setElementValue('ria-location', '');
+    setElementValue('ria-type', '');
+    setElementValue('ria-diametre', '');
+    setElementValue('ria-longueur', '');
+    setElementValue('ria-pression', '');
+    setElementValue('ria-observations', '');
+    setElementValue('ria-etat-general-comment', '');
+    setElementValue('ria-date-controle', today);
+    setElementValue('ria-prochain-controle', nextYear);
+    
+    resetOkNokFields(['etat-general', 'lisibilite', 'panneau', 'accessibilite']);
+    selectMaterialInterventionType('ria', 'verification');
+    clearPhotoGallery('ria-photo-gallery');
+    updateModalButton('add-ria-modal', 'Ajouter', addRIAToList);
 }
 
-// Fonctions globales exposées
+// ==================== FONCTIONS DE BAES ====================
+function addBAESToList() {
+    if (!validateMaterialForm('baes')) {
+        return;
+    }
+    
+    const baes = createBAESObject();
+    addMaterialToList(baes);
+    closeModal('add-baes-modal');
+    showSuccess('BAES ajouté avec succès');
+}
+
+function createBAESObject() {
+    return {
+        type: 'baes',
+        id: getElementValue('baes-id'),
+        localisation: getElementValue('baes-location'),
+        typeBAES: getElementValue('baes-type'),
+        puissance: getElementValue('baes-puissance'),
+        autonomie: getElementValue('baes-autonomie'),
+        dateControle: getElementValue('baes-date-controle'),
+        prochainControle: getElementValue('baes-prochain-controle'),
+        etatGeneral: getElementValue('baes-etat-general'),
+        etatGeneralComment: getElementValue('baes-etat-general-comment'),
+        fonctionnement: getElementValue('baes-fonctionnement'),
+        chargeur: getElementValue('baes-chargeur'),
+        accessibilite: getElementValue('baes-accessibilite'),
+        observations: getElementValue('baes-observations'),
+        interventionType: getElementValue('baes-intervention-type'),
+        photos: [],
+        verified: false,
+        dateVerification: null
+    };
+}
+
+function resetBAESForm() {
+    const today = new Date().toISOString().split('T')[0];
+    const nextYear = new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0];
+    
+    setElementValue('baes-id', '');
+    setElementValue('baes-location', '');
+    setElementValue('baes-type', '');
+    setElementValue('baes-puissance', '');
+    setElementValue('baes-autonomie', '');
+    setElementValue('baes-observations', '');
+    setElementValue('baes-etat-general-comment', '');
+    setElementValue('baes-date-controle', today);
+    setElementValue('baes-prochain-controle', nextYear);
+    
+    resetOkNokFields(['etat-general', 'fonctionnement', 'chargeur', 'accessibilite']);
+    selectMaterialInterventionType('baes', 'verification');
+    clearPhotoGallery('baes-photo-gallery');
+    updateModalButton('add-baes-modal', 'Ajouter', addBAESToList);
+}
+
+// ==================== FONCTIONS D'ALARME ====================
+function addAlarmeToList() {
+    if (!validateMaterialForm('alarme')) {
+        return;
+    }
+    
+    const alarme = createAlarmeObject();
+    addMaterialToList(alarme);
+    closeModal('add-alarme-modal');
+    showSuccess('Alarme ajoutée avec succès');
+}
+
+function createAlarmeObject() {
+    return {
+        type: 'alarme',
+        id: getElementValue('alarme-id'),
+        localisation: getElementValue('alarme-location'),
+        typeAlarme: getElementValue('alarme-type'),
+        dateVerif: getElementValue('alarme-date-verif'),
+        dateProchaine: getElementValue('alarme-date-prochaine'),
+        annee: getElementValue('alarme-annee'),
+        batterie: getCheckboxValue('alarme-batterie'),
+        fonctionnement: getCheckboxValue('alarme-fonctionnement'),
+        accessibilite: getCheckboxValue('alarme-accessibilite'),
+        registreSecurite: getElementValue('registre-securite'),
+        photos: AppState.currentAlarmePhotos,
+        verified: false,
+        dateVerification: null
+    };
+}
+
+function resetAlarmeForm() {
+    const today = new Date().toISOString().split('T')[0];
+    const nextYear = new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0];
+    
+    setElementValue('alarme-id', generateAlarmeId());
+    setElementValue('alarme-location', '');
+    setElementValue('alarme-type', '');
+    setElementValue('alarme-date-verif', today);
+    setElementValue('alarme-date-prochaine', nextYear);
+    setElementValue('alarme-annee', new Date().getFullYear());
+    setCheckboxValue('alarme-batterie', false);
+    setCheckboxValue('alarme-fonctionnement', false);
+    setCheckboxValue('alarme-accessibilite', false);
+    setElementValue('registre-securite', '');
+    
+    AppState.currentAlarmePhotos = [];
+    clearPhotoGallery('alarme-photo-gallery');
+    updateModalButton('add-alarme-modal', 'Ajouter', addAlarmeToList);
+}
+
+// ==================== FONCTIONS DE GESTION DES PHOTOS ====================
+function takePhoto(galleryId) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('La prise de photo n\'est pas supportée sur cet appareil');
+        return;
+    }
+    
+    navigator.mediaDevices.getUserMedia({ video: true })
+        .then(function(stream) {
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            video.play();
+            
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            setTimeout(() => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                context.drawImage(video, 0, 0);
+                
+                const photoData = canvas.toDataURL('image/jpeg');
+                addPhotoToGallery(galleryId, photoData);
+                
+                stream.getTracks().forEach(track => track.stop());
+            }, 1000);
+        })
+        .catch(function(error) {
+            console.error('Erreur prise photo:', error);
+            alert('Impossible d\'accéder à la caméra');
+        });
+}
+
+function addPhotoToGallery(galleryId, photoData) {
+    const gallery = document.getElementById(galleryId);
+    if (!gallery) return;
+    
+    const photoId = `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const photoItem = document.createElement('div');
+    photoItem.className = 'photo-item';
+    photoItem.innerHTML = `
+        <img src="${photoData}" alt="Photo">
+        <button class="btn btn-sm btn-danger" onclick="removePhoto('${photoId}')">
+            <i class="fas fa-times"></i>
+        </button>
+    `;
+    photoItem.id = photoId;
+    
+    gallery.appendChild(photoItem);
+    
+    // Stocker les photos d'alarme dans AppState
+    if (galleryId === 'alarme-photo-gallery') {
+        AppState.currentAlarmePhotos.push(photoData);
+    }
+}
+
+function removePhoto(photoId) {
+    const photoElement = document.getElementById(photoId);
+    if (photoElement) {
+        photoElement.remove();
+    }
+}
+
+// ==================== FONCTIONS MANQUANTES POUR VÉRIFICATION ====================
+function editMaterialForVerification(index) {
+    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
+        showError("Matériel non trouvé");
+        return;
+    }
+    
+    const material = AppState.currentClient.materials[index];
+    AppState.currentEditingMaterialIndex = index;
+    
+    switch(material.type) {
+        case 'extincteur':
+            editExtincteur(material);
+            break;
+        case 'ria':
+            editRIA(material);
+            break;
+        case 'baes':
+            editBAES(material);
+            break;
+        case 'alarme':
+            editAlarme(material);
+            break;
+    }
+}
+
+function editExtincteur(material) {
+    setFormValues({
+        'extincteur-id': material.id,
+        'extincteur-location': material.localisation,
+        'extincteur-type': material.typeExtincteur,
+        'extincteur-fabricant': material.fabricant,
+        'extincteur-modele': material.modele,
+        'extincteur-annee': material.annee,
+        'extincteur-capacite': material.capacite,
+        'extincteur-date-controle': material.dateControle,
+        'extincteur-prochain-controle': material.prochainControle,
+        'extincteur-etat-general': material.etatGeneral,
+        'extincteur-etat-general-comment': material.etatGeneralComment,
+        'extincteur-lisibilite': material.lisibilite,
+        'extincteur-panneau': material.panneau,
+        'extincteur-goupille': material.goupille,
+        'extincteur-pression': material.pression,
+        'extincteur-pesee': material.pesee,
+        'extincteur-joints': material.joints,
+        'extincteur-accessibilite': material.accessibilite,
+        'extincteur-observations': material.observations,
+        'extincteur-scelle': material.scelle,
+        'extincteur-remplacement-joint': material.remplacementJoint,
+        'extincteur-intervention-type': material.interventionType
+    });
+    
+    if (material.interventions) {
+        setCheckboxValue('extincteur-maa', material.interventions.maa);
+        setCheckboxValue('extincteur-eiee', material.interventions.eiee);
+        setCheckboxValue('extincteur-recharge', material.interventions.recharge);
+    }
+    
+    updateModalButton('add-extincteur-modal', 'Mettre à jour', updateExtincteur);
+    showModal('add-extincteur-modal');
+}
+
+function updateExtincteur() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedExtincteur = createExtincteurObject();
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedExtincteur;
+    
+    saveCurrentClientChanges();
+    closeModal('add-extincteur-modal');
+    displayVerificationList();
+    showSuccess('Extincteur mis à jour avec succès');
+}
+
+function editRIA(material) {
+    setFormValues({
+        'ria-id': material.id,
+        'ria-location': material.localisation,
+        'ria-type': material.typeRIA,
+        'ria-diametre': material.diametre,
+        'ria-longueur': material.longueur,
+        'ria-pression': material.pression,
+        'ria-date-controle': material.dateControle,
+        'ria-prochainControle': material.prochainControle,
+        'ria-etat-general': material.etatGeneral,
+        'ria-etat-general-comment': material.etatGeneralComment,
+        'ria-lisibilite': material.lisibilite,
+        'ria-panneau': material.panneau,
+        'ria-accessibilite': material.accessibilite,
+        'ria-observations': material.observations,
+        'ria-intervention-type': material.interventionType
+    });
+    
+    updateModalButton('add-ria-modal', 'Mettre à jour', updateRIA);
+    showModal('add-ria-modal');
+}
+
+function updateRIA() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedRIA = createRIAObject();
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedRIA;
+    
+    saveCurrentClientChanges();
+    closeModal('add-ria-modal');
+    displayVerificationList();
+    showSuccess('RIA mis à jour avec succès');
+}
+
+function editBAES(material) {
+    setFormValues({
+        'baes-id': material.id,
+        'baes-location': material.localisation,
+        'baes-type': material.typeBAES,
+        'baes-puissance': material.puissance,
+        'baes-autonomie': material.autonomie,
+        'baes-date-controle': material.dateControle,
+        'baes-prochainControle': material.prochainControle,
+        'baes-etat-general': material.etatGeneral,
+        'baes-etat-general-comment': material.etatGeneralComment,
+        'baes-fonctionnement': material.fonctionnement,
+        'baes-chargeur': material.chargeur,
+        'baes-accessibilite': material.accessibilite,
+        'baes-observations': material.observations,
+        'baes-intervention-type': material.interventionType
+    });
+    
+    updateModalButton('add-baes-modal', 'Mettre à jour', updateBAES);
+    showModal('add-baes-modal');
+}
+
+function updateBAES() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedBAES = createBAESObject();
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedBAES;
+    
+    saveCurrentClientChanges();
+    closeModal('add-baes-modal');
+    displayVerificationList();
+    showSuccess('BAES mis à jour avec succès');
+}
+
+function editAlarme(material) {
+    setFormValues({
+        'alarme-id': material.id,
+        'alarme-location': material.localisation,
+        'alarme-type': material.typeAlarme,
+        'alarme-date-verif': material.dateVerif,
+        'alarme-date-prochaine': material.dateProchaine,
+        'alarme-annee': material.annee,
+        'registre-securite': material.registreSecurite
+    });
+    
+    setCheckboxValue('alarme-batterie', material.batterie);
+    setCheckboxValue('alarme-fonctionnement', material.fonctionnement);
+    setCheckboxValue('alarme-accessibilite', material.accessibilite);
+    
+    AppState.currentAlarmePhotos = material.photos || [];
+    displayAlarmePhotos();
+    
+    updateModalButton('add-alarme-modal', 'Mettre à jour', updateAlarme);
+    showModal('add-alarme-modal');
+}
+
+function updateAlarme() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedAlarme = createAlarmeObject();
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedAlarme;
+    
+    saveCurrentClientChanges();
+    closeModal('add-alarme-modal');
+    displayVerificationList();
+    showSuccess('Alarme mise à jour avec succès');
+}
+
+function displayAlarmePhotos() {
+    const gallery = document.getElementById('alarme-photo-gallery');
+    if (!gallery) return;
+    
+    gallery.innerHTML = '';
+    AppState.currentAlarmePhotos.forEach((photoData, index) => {
+        const photoId = `alarme_photo_${index}`;
+        const photoItem = document.createElement('div');
+        photoItem.className = 'photo-item';
+        photoItem.innerHTML = `
+            <img src="${photoData}" alt="Photo alarme">
+            <button class="btn btn-sm btn-danger" onclick="removeAlarmePhoto(${index})">
+                <i class="fas fa-times"></i>
+            </button>
+        `;
+        photoItem.id = photoId;
+        gallery.appendChild(photoItem);
+    });
+}
+
+function removeAlarmePhoto(index) {
+    AppState.currentAlarmePhotos.splice(index, 1);
+    displayAlarmePhotos();
+}
+
+// ==================== SAUVEGARDE AUTOMATIQUE ET ENREGISTREMENT ====================
+function saveFacture() {
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    if (AppState.factureItems.length === 0 && AppState.fraisDeplacement === 0) {
+        showError('Aucun article dans la facture');
+        return;
+    }
+    
+    const totalHT = AppState.factureItems.reduce((sum, item) => sum + item.total, 0) + AppState.fraisDeplacement;
+    const tva = totalHT * 0.20;
+    const totalTTC = totalHT + tva;
+    
+    const facture = {
+        id: AppState.factureNumero,
+        numero: AppState.factureNumero,
+        clientId: AppState.currentClient.id,
+        clientName: AppState.currentClient.name,
+        date: new Date().toISOString().split('T')[0],
+        items: AppState.factureItems,
+        fraisDeplacement: AppState.fraisDeplacement,
+        totalHT: totalHT,
+        tva: tva,
+        totalTTC: totalTTC,
+        signatureClient: clientSignaturePad ? clientSignaturePad.toDataURL() : null,
+        signatureTechnicien: technicianSignaturePad ? technicianSignaturePad.toDataURL() : null,
+        created: new Date().toISOString()
+    };
+    
+    dbManager.save('factures', facture).then(() => {
+        showSuccess('Facture enregistrée avec succès !');
+        resetFactureForm();
+    }).catch(error => {
+        console.error('Erreur enregistrement facture:', error);
+        showError('Erreur lors de l\'enregistrement de la facture');
+    });
+}
+
+function resetFactureForm() {
+    AppState.factureItems = [];
+    AppState.fraisDeplacement = 0;
+    generateFactureNumber();
+    
+    updateFactureItemsList();
+    updateFactureTotal();
+    
+    if (clientSignaturePad) clientSignaturePad.clear();
+    if (technicianSignaturePad) technicianSignaturePad.clear();
+    
+    const fraisCheckbox = document.getElementById('frais-deplacement');
+    if (fraisCheckbox) fraisCheckbox.checked = false;
+    
+    const montantInput = document.getElementById('frais-deplacement-montant');
+    if (montantInput) montantInput.value = '0';
+}
+
+// ==================== GESTION AUTOMATIQUE DU NETTOYAGE ====================
+setInterval(() => {
+    const usage = new DatabaseManager().getLocalStorageUsage();
+    if (usage > 3 * 1024 * 1024) {
+        console.log('⏰ Nettoyage périodique du localStorage...');
+        new DatabaseManager().cleanupLocalStorage();
+    }
+}, 3600000);
+
+window.addEventListener('load', () => {
+    setTimeout(() => {
+        const usage = new DatabaseManager().getLocalStorageUsage();
+        if (usage > 4 * 1024 * 1024) {
+            console.log('🚀 Nettoyage au démarrage...');
+            new DatabaseManager().cleanupLocalStorage();
+        }
+    }, 5000);
+});
+
+// ==================== PRÉVISUALISATIONS ====================
+function previewReport() {
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    const materials = AppState.currentClient.materials.filter(m => m.verified);
+    if (materials.length === 0) {
+        showError('Aucun matériel vérifié à afficher dans le rapport');
+        return;
+    }
+    
+    const verifiedCount = materials.length;
+    const today = new Date().toLocaleDateString('fr-FR');
+    const technician = getElementValue('technician-name') || 'Technicien';
+    const registreSecurite = getElementValue('registre-securite');
+    
+    const materialsByType = groupMaterialsByType(materials);
+    
+    // Calculer les statistiques de conformité
+    let totalConforme = 0;
+    let totalNonConforme = 0;
+    
+    Object.values(materialsByType).forEach(items => {
+        items.forEach(material => {
+            let isConforme = true;
+            switch(material.type) {
+                case 'extincteur':
+                    isConforme = isExtincteurConforme(material);
+                    break;
+                case 'ria':
+                    isConforme = isRIAConforme(material);
+                    break;
+                case 'baes':
+                    isConforme = isBAESConforme(material);
+                    break;
+                case 'alarme':
+                    isConforme = isAlarmeConforme(material);
+                    break;
+            }
+            
+            if (isConforme) {
+                totalConforme++;
+            } else {
+                totalNonConforme++;
+            }
+        });
+    });
+    
+    const previewHTML = `
+        <div class="pdf-container" style="max-width: 800px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
+            <div class="pdf-header" style="border-bottom: 3px solid #1a365d; padding-bottom: 15px; margin-bottom: 20px;">
+                <div class="header-left" style="text-align: center;">
+                    <h1 style="color: #1a365d; margin: 0; font-size: 28px;">PRÉVISUALISATION DU RAPPORT</h1>
+                    <h2 style="color: #2c5282; margin: 10px 0 0 0; font-size: 18px;">Vérification Annuelle des Équipements de Sécurité Incendie</h2>
+                </div>
+                <div class="header-right" style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 14px;">
+                    <div>
+                        <p><strong>Date:</strong> ${today}</p>
+                        <p><strong>Référence:</strong> RAP-${new Date().getFullYear()}-${AppState.currentClient.id?.substr(0, 8) || '000000'}</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="client-info" style="background: #f7fafc; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2c5282;">
+                <h3 style="color: #1a365d; margin-top: 0; font-size: 18px;">INFORMATIONS CLIENT</h3>
+                <p><strong>Nom:</strong> ${escapeHtml(AppState.currentClient.name)}</p>
+                <p><strong>Contact:</strong> ${escapeHtml(AppState.currentClient.contact)}</p>
+                <p><strong>Adresse:</strong> ${escapeHtml(AppState.currentClient.address)}</p>
+                <p><strong>Technicien:</strong> ${escapeHtml(technician)}</p>
+                ${registreSecurite ? `
+                    <p><strong>Registre de sécurité:</strong> 
+                        ${registreSecurite === 'oui' ? '✅ Signé et conforme' : 
+                          registreSecurite === 'non' ? '❌ Non signé' : '⚠️ Indisponible'}
+                    </p>
+                ` : ''}
+            </div>
+            
+            <div class="conformite-summary" style="background: ${totalNonConforme === 0 ? '#d4edda' : '#fff3cd'}; padding: 15px; border-radius: 8px; margin: 20px 0; border: 2px solid ${totalNonConforme === 0 ? '#c3e6cb' : '#ffeaa7'};">
+                <h3 style="color: ${totalNonConforme === 0 ? '#155724' : '#856404'}; margin: 0; font-size: 20px;">
+                    ${totalNonConforme === 0 ? '✅ ÉTAT CONFORME' : '⚠️ ÉTAT NON CONFORME'}
+                </h3>
+                <p style="color: ${totalNonConforme === 0 ? '#155724' : '#856404'}; margin: 10px 0 0 0; font-size: 16px;">
+                    ${totalNonConforme === 0 
+                        ? `Tous les ${materials.length} matériels vérifiés sont conformes`
+                        : `${totalNonConforme} matériel(s) non conforme(s) sur ${materials.length}`}
+                </p>
+            </div>
+            
+            <div class="summary" style="background: #e8f4fd; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #b3d7ff;">
+                <h3 style="color: #1a365d; margin-top: 0; font-size: 18px;">SYNTHÈSE DES VÉRIFICATIONS</h3>
+                <div style="display: flex; justify-content: space-around; text-align: center; margin-top: 15px;">
+                    <div style="flex: 1;">
+                        <div style="font-size: 2em; font-weight: bold; color: #1a365d;">${materials.length}</div>
+                        <div>Matériels vérifiés</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="font-size: 2em; font-weight: bold; color: #28a745;">${totalConforme}</div>
+                        <div>Conformes</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="font-size: 2em; font-weight: bold; color: #dc3545;">${totalNonConforme}</div>
+                        <div>Non conformes</div>
+                    </div>
+                </div>
+            </div>
+            
+            ${Object.entries(materialsByType).map(([type, items]) => 
+                items.length > 0 ? `
+                <div style="margin: 20px 0;">
+                    <h3 style="color: #1a365d; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; font-size: 16px;">
+                        ${getMaterialInfo(type).text.toUpperCase()}
+                    </h3>
+                    <table style="width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px;">
+                        <thead>
+                            <tr style="background: #1a365d; color: white;">
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">ID</th>
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Localisation</th>
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Type/Modèle</th>
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Année</th>
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Date vérif.</th>
+                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">État</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${items.map(material => {
+                                let isConforme = true;
+                                let conformiteText = 'CONFORME';
+                                let conformiteColor = '#28a745';
+                                let observations = material.observations || '';
+                                
+                                switch(type) {
+                                    case 'extincteur':
+                                        isConforme = isExtincteurConforme(material);
+                                        if (material.annee) {
+                                            const age = new Date().getFullYear() - parseInt(material.annee);
+                                            if (age >= 10) {
+                                                isConforme = false;
+                                                conformiteText = 'NON CONFORME (âge > 10 ans)';
+                                                conformiteColor = '#dc3545';
+                                            }
+                                        }
+                                        break;
+                                    case 'ria':
+                                        isConforme = isRIAConforme(material);
+                                        break;
+                                    case 'baes':
+                                        isConforme = isBAESConforme(material);
+                                        break;
+                                    case 'alarme':
+                                        isConforme = isAlarmeConforme(material);
+                                        break;
+                                }
+                                
+                                if (!isConforme && conformiteText === 'CONFORME') {
+                                    conformiteText = 'NON CONFORME';
+                                    conformiteColor = '#dc3545';
+                                }
+                                
+                                if (observations.toLowerCase().includes('non conforme')) {
+                                    conformiteText = 'NON CONFORME (observations)';
+                                    conformiteColor = '#dc3545';
+                                }
+                                
+                                return `
+                                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                                        <td style="padding: 8px; border: 1px solid #ddd;"><strong>${material.id || material.numero}</strong></td>
+                                        <td style="padding: 8px; border: 1px solid #ddd;">${material.localisation || material.location || 'Non spécifié'}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd;">${material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || ''}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd;">${material.annee || ''}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd;">${formatDate(material.dateVerification)}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd;">
+                                            <span style="background: ${conformiteColor}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">
+                                                ${conformiteText}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ` : ''
+            ).join('')}
+            
+            <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+                <h3 style="color: #1a365d; margin-top: 0; font-size: 16px;">VALIDITÉ</h3>
+                <p>Ce rapport est valable 12 mois à compter de la date de vérification.</p>
+                <p><strong>Date de la prochaine vérification recommandée:</strong> ${getNextVerificationDate()}</p>
+            </div>
+        </div>
+    `;
+    
+    const modal = document.getElementById('preview-modal');
+    const content = document.getElementById('preview-content');
+    
+    if (!modal || !content) {
+        showError('Modal de prévisualisation non trouvé');
+        return;
+    }
+    
+    content.innerHTML = previewHTML;
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function previewFacture() {
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    if (AppState.factureItems.length === 0 && AppState.fraisDeplacement === 0) {
+        showError('Aucun article dans la facture');
+        return;
+    }
+    
+const modal = document.getElementById('facture-modal');
+const content = document.getElementById('facture-content');
+    
+    if (!modal || !content) {
+        showError('Modal de prévisualisation non trouvé');
+        return;
+    }
+    
+    const totalHT = AppState.factureItems.reduce((sum, item) => sum + item.total, 0) + AppState.fraisDeplacement;
+    const tva = totalHT * 0.20;
+    const totalTTC = totalHT + tva;
+    
+    const previewHTML = `
+        <div class="pdf-container" style="max-width: 800px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
+            <div class="header" style="border-bottom: 3px solid #dc3545; padding-bottom: 15px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div>
+                        <h1 style="color: #dc3545; margin: 0; font-size: 28px;">FACTURE</h1>
+                        <p style="font-size: 16px; margin: 5px 0;"><strong>${AppState.factureNumero}</strong></p>
+                    </div>
+                    <div style="text-align: right;">
+                        <p><strong>Date:</strong> ${formatDate(new Date().toISOString())}</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; margin-bottom: 30px;">
+                <div style="width: 48%;">
+                    <h3 style="color: #495057; margin-top: 0; font-size: 16px;">VOTRE ENTREPRISE</h3>
+                    <p>Adresse de votre entreprise</p>
+                    <p>Tél: 01 23 45 67 89</p>
+                    <p>Email: contact@votreentreprise.com</p>
+                    <p>SIRET: 123 456 789 00000</p>
+                </div>
+                
+                <div style="width: 48%;">
+                    <h3 style="color: #495057; margin-top: 0; font-size: 16px;">CLIENT</h3>
+                    <p><strong>${escapeHtml(AppState.currentClient.name)}</strong></p>
+                    <p>${escapeHtml(AppState.currentClient.contact)}</p>
+                    <p>${escapeHtml(AppState.currentClient.address)}</p>
+                    ${AppState.currentClient.email ? `<p>Email: ${escapeHtml(AppState.currentClient.email)}</p>` : ''}
+                    ${AppState.currentClient.phone ? `<p>Tél: ${escapeHtml(AppState.currentClient.phone)}</p>` : ''}
+                </div>
+            </div>
+            
+            <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 12px;">
+                <thead>
+                    <tr style="background: #dc3545; color: white;">
+                        <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Description</th>
+                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Qté</th>
+                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Prix unitaire HT</th>
+                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Total HT</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${AppState.factureItems.map(item => `
+                        <tr style="border-bottom: 1px solid #dee2e6;">
+                            <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(item.description)}</td>
+                            <td style="padding: 8px; text-align: center; border: 1px solid #ddd;">${item.quantity}</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${item.price.toFixed(2)} €</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${item.total.toFixed(2)} €</td>
+                        </tr>
+                    `).join('')}
+                    
+                    ${AppState.fraisDeplacement > 0 ? `
+                        <tr style="border-bottom: 1px solid #dee2e6;">
+                            <td style="padding: 8px; border: 1px solid #ddd;">Frais de déplacement</td>
+                            <td style="padding: 8px; text-align: center; border: 1px solid #ddd;">1</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${AppState.fraisDeplacement.toFixed(2)} €</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${AppState.fraisDeplacement.toFixed(2)} €</td>
+                        </tr>
+                    ` : ''}
+                    
+                    <tr style="background: #f8f9fa; font-weight: bold;">
+                        <td colspan="3" style="padding: 10px; text-align: right; border: 1px solid #ddd;">Total HT</td>
+                        <td style="padding: 10px; text-align: right; border: 1px solid #ddd;">${totalHT.toFixed(2)} €</td>
+                    </tr>
+                    <tr>
+                        <td colspan="3" style="padding: 8px; text-align: right; border: 1px solid #ddd;">TVA (20%)</td>
+                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${tva.toFixed(2)} €</td>
+                    </tr>
+                    <tr style="background: #f8f9fa; font-weight: bold;">
+                        <td colspan="3" style="padding: 10px; text-align: right; border: 1px solid #ddd;">Total TTC</td>
+                        <td style="padding: 10px; text-align: right; border: 1px solid #ddd;">${totalTTC.toFixed(2)} €</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 5px; border: 1px solid #dee2e6;">
+                <h4 style="color: #495057; margin-top: 0; font-size: 14px;">Notes:</h4>
+                <p>Paiement à réception de facture. En cas de retard, pénalité de 1,5% par mois.</p>
+                <p><strong>Mode de règlement:</strong> Virement bancaire</p>
+                <p><strong>IBAN:</strong> FR76 3000 1000 1234 5678 9012 345</p>
+            </div>
+            
+            <div style="margin-top: 50px; text-align: center; border-top: 2px dashed #ccc; padding-top: 20px;">
+                <p>Fait pour valoir et servir que de droit</p>
+                <div style="width: 200px; border-top: 1px solid #333; margin: 20px auto 8px auto;"></div>
+                <p>Le ${formatDate(new Date().toISOString())}</p>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = previewHTML;
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+// ==================== GÉNÉRATION FACTURE PDF ====================
+async function generateFacturePDF() {
+    console.log('🧾 Génération du PDF de facture avec jsPDF...');
+    
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    if (AppState.factureItems.length === 0 && AppState.fraisDeplacement === 0) {
+        showError('Aucun article dans la facture');
+        return;
+    }
+    
+    showLoading('Génération de la facture en PDF...');
+    
+    try {
+        await ensureJSPDF();
+        
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+        
+        // Configurations
+        const margin = 15;
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const contentWidth = pageWidth - (2 * margin);
+        
+        // Variables de position
+        let currentY = margin;
+        
+        // Fonctions utilitaires simplifiées
+        const addText = (text, x, y, fontSize = 10, style = 'normal', align = 'left', color = [0, 0, 0]) => {
+            doc.setFontSize(fontSize);
+            doc.setFont('helvetica', style);
+            doc.setTextColor(color[0], color[1], color[2]);
+            doc.text(text, x, y, { align: align });
+        };
+        
+        const addLine = (y, color = [200, 200, 200], width = 1) => {
+            doc.setDrawColor(color[0], color[1], color[2]);
+            doc.setLineWidth(width);
+            doc.line(margin, y, pageWidth - margin, y);
+        };
+        
+        // Calcul des totaux
+        const totalHT = AppState.factureItems.reduce((sum, item) => sum + item.total, 0) + AppState.fraisDeplacement;
+        const tva = totalHT * 0.20;
+        const totalTTC = totalHT + tva;
+        const today = new Date().toLocaleDateString('fr-FR');
+        
+        // En-tête
+        addText('FACTURE', margin, currentY, 20, 'bold', 'left', [220, 53, 69]);
+        currentY += 10;
+        
+        addText(AppState.factureNumero, margin, currentY, 14, 'bold', 'left', [220, 53, 69]);
+        addText(`Date: ${today}`, pageWidth - margin, currentY, 10, 'normal', 'right');
+        currentY += 8;
+        
+        addLine(currentY, [220, 53, 69], 1);
+        currentY += 10;
+        
+        // Informations entreprise
+        addText('VOTRE ENTREPRISE', margin, currentY, 12, 'bold', 'left', [73, 80, 87]);
+        currentY += 7;
+        addText('Adresse de votre entreprise', margin, currentY, 10);
+        currentY += 5;
+        addText('Tél: 01 23 45 67 89', margin, currentY, 10);
+        currentY += 5;
+        addText('Email: contact@votreentreprise.com', margin, currentY, 10);
+        currentY += 5;
+        addText('SIRET: 123 456 789 00000', margin, currentY, 10);
+        currentY += 10;
+        
+        // Informations client
+        addText('CLIENT', margin + contentWidth/2, currentY - 25, 12, 'bold', 'left', [73, 80, 87]);
+        const client = AppState.currentClient;
+        addText(client.name, margin + contentWidth/2, currentY - 18, 10, 'bold');
+        addText(client.contact, margin + contentWidth/2, currentY - 13, 10);
+        addText(client.address, margin + contentWidth/2, currentY - 8, 10);
+        
+        if (client.email) {
+            addText(`Email: ${client.email}`, margin + contentWidth/2, currentY - 3, 10);
+        }
+        if (client.phone) {
+            addText(`Tél: ${client.phone}`, margin + contentWidth/2, currentY + 2, 10);
+        }
+        
+        currentY += 10;
+        
+        // Tableau des articles
+        addText('DÉTAIL DES ARTICLES', margin, currentY, 12, 'bold', 'left', [73, 80, 87]);
+        currentY += 7;
+        
+        // En-têtes du tableau
+        const headers = ['Description', 'Qté', 'Prix HT', 'Total HT'];
+        const colWidths = [80, 20, 30, 30];
+        
+        // CORRECTION : Dessiner les en-têtes SANS rectangle de fond noir
+        doc.setFillColor(220, 53, 69); // Rouge pour le fond
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        
+        let xPos = margin;
+        headers.forEach((header, i) => {
+            // Dessiner le rectangle avec couleur rouge
+            doc.rect(xPos, currentY, colWidths[i], 8, 'F');
+            // Ajouter le texte
+            doc.text(header, xPos + colWidths[i]/2, currentY + 5, { align: 'center' });
+            xPos += colWidths[i];
+        });
+        
+        currentY += 8;
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('helvetica', 'normal');
+        
+        // Articles
+        AppState.factureItems.forEach((item, index) => {
+            // Vérifier si on dépasse la page
+            if (currentY > pageHeight - 50) {
+                doc.addPage();
+                currentY = margin;
+                // Redessiner les en-têtes si nouvelle page
+                doc.setFillColor(220, 53, 69);
+                doc.setTextColor(255, 255, 255);
+                doc.setFont('helvetica', 'bold');
+                
+                xPos = margin;
+                headers.forEach((header, i) => {
+                    doc.rect(xPos, currentY, colWidths[i], 8, 'F');
+                    doc.text(header, xPos + colWidths[i]/2, currentY + 5, { align: 'center' });
+                    xPos += colWidths[i];
+                });
+                
+                currentY += 8;
+                doc.setTextColor(0, 0, 0);
+                doc.setFont('helvetica', 'normal');
+            }
+            
+            // Ligne de données
+            const rowData = [
+                item.description.substring(0, 40),
+                item.quantity.toString(),
+                `${item.price.toFixed(2)} €`,
+                `${item.total.toFixed(2)} €`
+            ];
+            
+            // Alterner les couleurs de fond pour les lignes
+            if (index % 2 === 0) {
+                doc.setFillColor(248, 249, 250); // Gris très clair
+                doc.rect(margin, currentY, contentWidth, 7, 'F');
+            }
+            
+            xPos = margin;
+            rowData.forEach((data, i) => {
+                const align = i === 1 ? 'center' : i >= 2 ? 'right' : 'left';
+                doc.setTextColor(0, 0, 0);
+                doc.text(data, xPos + (i === 0 ? 2 : colWidths[i]/2), currentY + 4.5, { align: align });
+                xPos += colWidths[i];
+            });
+            
+            currentY += 7;
+        });
+        
+        // Frais de déplacement
+        if (AppState.fraisDeplacement > 0) {
+            const rowData = [
+                'Frais de déplacement',
+                '1',
+                `${AppState.fraisDeplacement.toFixed(2)} €`,
+                `${AppState.fraisDeplacement.toFixed(2)} €`
+            ];
+            
+            if (currentY > pageHeight - 50) {
+                doc.addPage();
+                currentY = margin;
+            }
+            
+            xPos = margin;
+            rowData.forEach((data, i) => {
+                const align = i === 1 ? 'center' : i >= 2 ? 'right' : 'left';
+                doc.text(data, xPos + (i === 0 ? 2 : colWidths[i]/2), currentY + 4.5, { align: align });
+                xPos += colWidths[i];
+            });
+            
+            currentY += 7;
+        }
+        
+        currentY += 10;
+        
+        // Totaux - CORRECTION : Supprimer le rectangle qui causait le carré noir
+        const totals = [
+            { label: 'Total HT', value: totalHT.toFixed(2) + ' €' },
+            { label: 'TVA (20%)', value: tva.toFixed(2) + ' €' },
+            { label: 'Total TTC', value: totalTTC.toFixed(2) + ' €' }
+        ];
+        
+        totals.forEach((total, index) => {
+            const isTotal = index === totals.length - 1;
+            
+            // CORRECTION : Pas de doc.rect() ici pour éviter le carré noir
+            if (isTotal) {
+                doc.setTextColor(220, 53, 69); // Rouge pour le total
+                doc.setFont('helvetica', 'bold');
+            } else {
+                doc.setTextColor(0, 0, 0);
+                doc.setFont('helvetica', 'normal');
+            }
+            
+            doc.text(total.label, margin + 100, currentY, { align: 'right' });
+            doc.text(total.value, margin + 140, currentY, { align: 'right' });
+            
+            currentY += isTotal ? 8 : 6;
+        });
+        
+        // Réinitialiser la couleur
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('helvetica', 'normal');
+        
+        currentY += 15;
+        
+        // Informations de paiement
+        addText('INFORMATIONS DE PAIEMENT', margin, currentY, 12, 'bold', 'left', [73, 80, 87]);
+        currentY += 7;
+        addText('Mode de règlement: Virement bancaire', margin, currentY, 10);
+        currentY += 5;
+        addText('IBAN: FR76 3000 1000 1234 5678 9012 345', margin, currentY, 10);
+        currentY += 5;
+        addText('Paiement à réception de facture', margin, currentY, 10);
+        currentY += 5;
+        addText('En cas de retard, pénalité de 1,5% par mois', margin, currentY, 10);
+        
+        currentY += 15;
+        
+        // Signature
+        addText('Fait pour valoir et servir que de droit', margin, currentY, 10, 'italic');
+        currentY += 10;
+        
+        addLine(currentY, [0, 0, 0]);
+        addText(`Le ${today}`, margin, currentY + 5, 10);
+        
+        // Sauvegarder le PDF
+        const filename = `Facture_${AppState.factureNumero.replace(/\//g, '_')}.pdf`;
+        doc.save(filename);
+        
+        closeLoading();
+        showSuccess('Facture générée en PDF avec succès !');
+        
+    } catch (error) {
+        console.error('Erreur génération PDF facture:', error);
+        closeLoading();
+        showError('Erreur lors de la génération de la facture: ' + error.message);
+    }
+}
+
+// ==================== ALIAS POUR LES FONCTIONS PDF ====================
+
+// Ces fonctions sont des alias pour la compatibilité avec le HTML
+function generatePDFFromPreview() {
+    // Alias pour generatePDFReport
+    generatePDFReport();
+}
+
+function generateFacturePDFFromPreview() {
+    // Alias pour generateFacturePDF
+    generateFacturePDF();
+}
+
+// Fonctions avec d'autres noms pour compatibilité
+function generatePDF() {
+    return generatePDFReport();
+}
+
+function generateFacture() {
+    return generateFacturePDF();
+}
+
+function enregistrerFacturePDF() {
+    return generateFacturePDF();
+}
+
+function genererPDFRapport() {
+    return generatePDFReport();
+}
+
+// ==================== AJOUTER TOUTES LES FONCTIONS AU WINDOW ====================
+
+// Exposer toutes les fonctions PDF
+window.generatePDFReport = generatePDFReport;
+window.generateFacturePDF = generateFacturePDF;
+window.previewReport = previewReport;
+window.previewFacture = previewFacture;
+window.generatePDFFromPreview = generatePDFFromPreview;
+window.generateFacturePDFFromPreview = generateFacturePDFFromPreview;
+window.generatePDF = generatePDF;
+window.generateFacture = generateFacture;
+window.enregistrerFacturePDF = enregistrerFacturePDF;
+window.genererPDFRapport = genererPDFRapport;
+
+// Fonctions d'édition de matériels
+window.addExtincteurToList = addExtincteurToList;
+window.addRIAToList = addRIAToList;
+window.addBAESToList = addBAESToList;
+window.addAlarmeToList = addAlarmeToList;
+window.updateExtincteur = updateExtincteur;
+window.updateRIA = updateRIA;
+window.updateBAES = updateBAES;
+window.updateAlarme = updateAlarme;
+window.editMaterialForVerification = editMaterialForVerification;
+window.editExtincteur = editExtincteur;
+window.editRIA = editRIA;
+window.editBAES = editBAES;
+window.editAlarme = editAlarme;
+window.selectOkNok = selectOkNok;
+window.selectRIANok = selectRIANok;
+window.selectBAESNok = selectBAESNok;
+window.selectExtincteurInterventionType = selectExtincteurInterventionType;
+window.selectRIAInterventionType = selectRIAInterventionType;
+window.selectBAESInterventionType = selectBAESInterventionType;
+window.selectMaterialInterventionType = selectMaterialInterventionType;
+window.selectRegistreSecurite = selectRegistreSecurite;
+window.checkExtincteurAge = checkExtincteurAge;
+window.generateExtincteurId = generateExtincteurId;
+window.takePhoto = takePhoto;
+window.addPhotoToGallery = addPhotoToGallery;
+window.removePhoto = removePhoto;
+window.removeAlarmePhoto = removeAlarmePhoto;
+window.clearSignature = clearSignature;
+window.undoSignature = undoSignature;
+window.toggleFraisDeplacement = toggleFraisDeplacement;
+window.addFactureItem = addFactureItem;
+window.removeFactureItem = removeFactureItem;
+window.updateFactureTotal = updateFactureTotal;
+window.saveFacture = saveFacture;
+window.closeExtincteurModal = closeExtincteurModal;
+window.closeRIAModal = closeRIAModal;
+window.closeBAESModal = closeBAESModal;
+window.closeAlarmeModal = closeAlarmeModal;
+window.closeInterventionModal = closeInterventionModal;
+window.closePreview = closePreview;
+window.closeFacture = closeFacture;
+window.addIntervention = addIntervention;
+window.saveIntervention = saveIntervention;
+window.editIntervention = editIntervention;
+window.deleteIntervention = deleteIntervention;
+window.updateInterventionColor = updateInterventionColor;
+window.changeMonth = changeMonth;
+window.goToToday = goToToday;
+window.goToVerificationFromPlanning = goToVerificationFromPlanning;
+window.searchClients = searchClients;
+window.searchHistory = searchHistory;
+window.createClient = createClient;
+window.deleteClient = deleteClient;
+window.selectClient = selectClient;
+window.openMaterialModal = openMaterialModal;
+window.removeMaterial = removeMaterial;
+window.removeMaterialFromVerification = removeMaterialFromVerification;
+window.verifyMaterial = verifyMaterial;
+window.unverifyMaterial = unverifyMaterial;
+window.verifyAllInFamily = verifyAllInFamily;
+window.toggleFamilyFilter = toggleFamilyFilter;
+window.completeVerification = completeVerification;
+window.viewClientHistory = viewClientHistory;
+window.closeSuccessModal = closeSuccessModal;
+window.closeErrorModal = closeErrorModal;
 window.exportAllDataManual = exportAllDataManual;
 window.createBackupNow = createBackupNow;
 window.triggerImport = triggerImport;
-window.forceSync = forceSync;
 window.showDataManagementModal = showDataManagementModal;
 window.logoutUser = logoutUser;
-
-// Garder la compatibilité avec l'ancien code
 window.saveClients = saveClients;
 window.saveInterventions = saveInterventions;
 
-console.log('FireCheck Pro - Système de données avancé chargé');
+console.log('🎉 Application FireCheck Pro initialisée avec rapport PDF optimisé !');

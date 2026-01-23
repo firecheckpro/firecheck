@@ -36,6 +36,9 @@
     <!-- Theme Colors -->
     <meta name="theme-color" content="#e74c3c">
     <meta name="msapplication-TileColor" content="#e74c3c">
+
+    <!-- icons : -->
+    <link rel="apple-touch-icon" href="icon-192x192.png">
     
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -47,7 +50,7 @@
     <!-- Signature Pad -->
     <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.5/dist/signature_pad.umd.min.js"></script>
     
-<script src="check-auth.js"></script>
+    <script src="check-auth.js"></script>
 
     <style>
         /* Variables et Reset */
@@ -2319,6 +2322,128 @@
         padding: 2px 6px;
     }
 }
+
+/* ==================== BOUTONS CONFORME/NON CONFORME ==================== */
+.conformite-selector {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 2px solid var(--border-color);
+}
+
+.conformite-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.conformite-options {
+    display: flex;
+    gap: 1rem;
+}
+
+.conformite-option {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: var(--bg-secondary);
+}
+
+.conformite-option:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+
+.conformite-option.selected {
+    border-width: 3px;
+}
+
+.conformite-option.conforme {
+    border-color: var(--success);
+    background: rgba(46, 125, 50, 0.05);
+}
+
+.conformite-option.conforme.selected {
+    background: rgba(46, 125, 50, 0.2);
+    border-color: var(--success);
+}
+
+.conformite-option.non-conforme {
+    border-color: var(--danger);
+    background: rgba(198, 40, 40, 0.05);
+}
+
+.conformite-option.non-conforme.selected {
+    background: rgba(198, 40, 40, 0.2);
+    border-color: var(--danger);
+}
+
+.conformite-icon {
+    font-size: 1.8rem;
+    margin-bottom: 0.5rem;
+}
+
+.conformite-option.conforme .conformite-icon {
+    color: var(--success);
+}
+
+.conformite-option.non-conforme .conformite-icon {
+    color: var(--danger);
+}
+
+.conformite-label {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.conformite-error {
+    color: var(--danger);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    opacity: 0;
+    height: 0;
+    transition: all 0.3s ease;
+}
+
+.conformite-error.show {
+    opacity: 1;
+    height: auto;
+}
+
+/* Responsive pour les boutons de conformité */
+@media (max-width: 768px) {
+    .conformite-options {
+        flex-direction: column;
+        gap: 0.8rem;
+    }
+    
+    .conformite-option {
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: 1rem;
+        padding: 0.8rem;
+    }
+    
+    .conformite-icon {
+        margin-bottom: 0;
+        font-size: 1.5rem;
+    }
+}
     </style>
 </head>
 <body>
@@ -2818,18 +2943,16 @@
                     
                     <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
                         <button class="btn btn-purple" onclick="previewFacture()" style="flex: 1;">
-                            <i class="fas fa-eye"></i> Prévisualiser Facture
+                            <i class="fas fa-eye"></i> Facture
                         </button>
                     </div>
                 </div>
 
                 <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
                     <button class="btn btn-primary" onclick="previewReport()" style="flex: 1;">
-                        <i class="fas fa-eye"></i> Prévisualiser
+                        <i class="fas fa-eye"></i> Rapport de Vérification
                     </button>
-                    <button class="btn btn-success" onclick="generatePDF()" id="generate-pdf-btn" style="flex: 1;">
-                        <i class="fas fa-file-pdf"></i> Générer PDF APSAD
-                    </button>
+
                 </div>
             </div>
         </section>
@@ -3129,6 +3252,31 @@
                 </div>
             </div>
 
+            <!-- Section Conformité (AJOUTÉE) -->
+            <div class="conformite-selector">
+                <div class="conformite-title">
+                    <i class="fas fa-check-circle"></i> État de conformité *
+                </div>
+                <div class="conformite-options">
+                    <div class="conformite-option conforme" onclick="selectConformite('extincteur', 'conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-check"></i>
+                        </div>
+                        <div class="conformite-label">Conforme</div>
+                    </div>
+                    <div class="conformite-option non-conforme" onclick="selectConformite('extincteur', 'non-conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-times"></i>
+                        </div>
+                        <div class="conformite-label">Non Conforme</div>
+                    </div>
+                </div>
+                <input type="hidden" id="extincteur-conformite" value="" required>
+                <div id="extincteur-conformite-error" class="conformite-error">
+                    <i class="fas fa-exclamation-circle"></i> Veuillez sélectionner un état de conformité
+                </div>
+            </div>
+
             <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
                 <button class="btn" onclick="closeExtincteurModal()" style="flex: 1; background: var(--border-color);">
                     Annuler
@@ -3343,6 +3491,31 @@
                     <label class="form-label">Observations</label>
                     <textarea class="form-textarea" id="ria-observations" 
                               placeholder="Observations..." rows="3"></textarea>
+                </div>
+            </div>
+
+            <!-- Section Conformité (AJOUTÉE) -->
+            <div class="conformite-selector">
+                <div class="conformite-title">
+                    <i class="fas fa-check-circle"></i> État de conformité *
+                </div>
+                <div class="conformite-options">
+                    <div class="conformite-option conforme" onclick="selectConformite('ria', 'conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-check"></i>
+                        </div>
+                        <div class="conformite-label">Conforme</div>
+                    </div>
+                    <div class="conformite-option non-conforme" onclick="selectConformite('ria', 'non-conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-times"></i>
+                        </div>
+                        <div class="conformite-label">Non Conforme</div>
+                    </div>
+                </div>
+                <input type="hidden" id="ria-conformite" value="" required>
+                <div id="ria-conformite-error" class="conformite-error">
+                    <i class="fas fa-exclamation-circle"></i> Veuillez sélectionner un état de conformité
                 </div>
             </div>
 
@@ -3584,6 +3757,31 @@
                     <label class="form-label">Observations</label>
                     <textarea class="form-textarea" id="baes-observations" 
                               placeholder="Observations..." rows="3"></textarea>
+                </div>
+            </div>
+
+            <!-- Section Conformité (AJOUTÉE) -->
+            <div class="conformite-selector">
+                <div class="conformite-title">
+                    <i class="fas fa-check-circle"></i> État de conformité *
+                </div>
+                <div class="conformite-options">
+                    <div class="conformite-option conforme" onclick="selectConformite('baes', 'conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-check"></i>
+                        </div>
+                        <div class="conformite-label">Conforme</div>
+                    </div>
+                    <div class="conformite-option non-conforme" onclick="selectConformite('baes', 'non-conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-times"></i>
+                        </div>
+                        <div class="conformite-label">Non Conforme</div>
+                    </div>
+                </div>
+                <input type="hidden" id="baes-conformite" value="" required>
+                <div id="baes-conformite-error" class="conformite-error">
+                    <i class="fas fa-exclamation-circle"></i> Veuillez sélectionner un état de conformité
                 </div>
             </div>
 
@@ -3839,6 +4037,31 @@
                 </div>
             </div>
 
+            <!-- Section Conformité (AJOUTÉE) -->
+            <div class="conformite-selector">
+                <div class="conformite-title">
+                    <i class="fas fa-check-circle"></i> État de conformité *
+                </div>
+                <div class="conformite-options">
+                    <div class="conformite-option conforme" onclick="selectConformite('alarme', 'conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-check"></i>
+                        </div>
+                        <div class="conformite-label">Conforme</div>
+                    </div>
+                    <div class="conformite-option non-conforme" onclick="selectConformite('alarme', 'non-conforme')">
+                        <div class="conformite-icon">
+                            <i class="fas fa-times"></i>
+                        </div>
+                        <div class="conformite-label">Non Conforme</div>
+                    </div>
+                </div>
+                <input type="hidden" id="alarme-conformite" value="" required>
+                <div id="alarme-conformite-error" class="conformite-error">
+                    <i class="fas fa-exclamation-circle"></i> Veuillez sélectionner un état de conformité
+                </div>
+            </div>
+
             <div style="display: flex; gap: 0.8rem; margin-top: 1.5rem;">
                 <button class="btn" onclick="closeAlarmeModal()" style="flex: 1; background: var(--border-color);">
                     Annuler
@@ -3916,57 +4139,58 @@
         </div>
     </div>
 
-    <!-- Modal Preview -->
-    <div class="modal" id="preview-modal">
-        <div class="modal-content">
-            <div class="preview-container">
-                <div class="preview-header">
-                    <h2 style="color: white; margin: 0;">
-                        <i class="fas fa-eye"></i> Prévisualisation du rapport APSAD
-                    </h2>
-                    <div style="margin-top: 0.5rem;">
-                        <button class="btn btn-sm" onclick="printPreview()">
-                            <i class="fas fa-print"></i> Imprimer
-                        </button>
-                        <button class="btn btn-sm btn-danger" onclick="closePreview()" style="margin-left: 0.5rem;">
-                            <i class="fas fa-times"></i> Fermer
-                        </button>
-                    </div>
-                </div>
-                <div class="preview-content">
-                    <div class="preview-paper" id="preview-content">
-                        <!-- Le contenu du preview sera généré dynamiquement -->
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 
-    <!-- Modal Facture -->
-    <div class="modal" id="facture-modal">
-        <div class="modal-content">
-            <div class="preview-container">
-                <div class="preview-header">
-                    <h2 style="color: white; margin: 0;">
-                        <i class="fas fa-file-invoice-dollar"></i> Prévisualisation de la facture
-                    </h2>
-                    <div style="margin-top: 0.5rem;">
-                        <button class="btn btn-sm btn-success" onclick="generateFacturePDF()">
-                            <i class="fas fa-file-pdf"></i> Enregistrer en PDF
-                        </button>
-                        <button class="btn btn-sm btn-danger" onclick="closeFacture()" style="margin-left: 0.5rem;">
-                            <i class="fas fa-times"></i> Fermer
-                        </button>
-                    </div>
+<!-- Modal Prévisualisation Rapport -->
+<div class="modal" id="preview-modal">
+    <div class="modal-content">
+        <div class="preview-container">
+            <div class="preview-header">
+                <h2 style="color: white; margin: 0;">
+                    <i class="fas fa-eye"></i> Prévisualisation Rapport
+                </h2>
+                <div style="margin-top: 0.5rem;">
+                    <button class="btn btn-sm btn-success" onclick="generatePDFReport()">
+                        <i class="fas fa-file-pdf"></i> Générer Rapport PDF
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="closePreview()" style="margin-left: 0.5rem;">
+                        <i class="fas fa-times"></i> Fermer
+                    </button>
                 </div>
-                <div class="preview-content">
-                    <div class="preview-paper facture-paper" id="facture-content">
-                        <!-- Le contenu de la facture sera généré dynamiquement -->
-                    </div>
+            </div>
+            <div class="preview-content">
+                <div class="preview-paper" id="preview-content">
+                    <!-- Le contenu du rapport sera généré dynamiquement -->
                 </div>
             </div>
         </div>
     </div>
+</div>
+
+<!-- Modal Prévisualisation Facture -->
+<div class="modal" id="facture-modal">
+    <div class="modal-content">
+        <div class="preview-container">
+            <div class="preview-header">
+                <h2 style="color: white; margin: 0;">
+                    <i class="fas fa-eye"></i> Prévisualisation Facture
+                </h2>
+                <div style="margin-top: 0.5rem;">
+                    <button class="btn btn-sm btn-success" onclick="generateFacturePDF()">
+                        <i class="fas fa-file-pdf"></i> Générer Facture PDF
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="closeFacture()" style="margin-left: 0.5rem;">
+                        <i class="fas fa-times"></i> Fermer
+                    </button>
+                </div>
+            </div>
+            <div class="preview-content">
+                <div class="preview-paper facture-paper" id="facture-content">
+                    <!-- Le contenu de la facture sera généré dynamiquement -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
     <!-- Modal Succès -->
     <div class="modal" id="success-modal">
@@ -4288,8 +4512,194 @@ setTimeout(updateNetworkStatus, 500); // Petit délai pour laisser le header se 
     });
 </script>
 
+    <script>
+        // ==================== FONCTIONS POUR LA CONFORMITÉ ====================
+        
+        // Fonction pour sélectionner l'état de conformité
+        window.selectConformite = function(materialType, value) {
+            console.log(`Sélection conformité ${materialType}: ${value}`);
+            
+            // Récupérer tous les boutons pour ce type de matériel
+            const options = document.querySelectorAll(`#add-${materialType}-modal .conformite-option`);
+            
+            // Retirer la classe 'selected' de tous les boutons
+            options.forEach(option => {
+                option.classList.remove('selected');
+            });
+            
+            // Ajouter la classe 'selected' au bouton cliqué
+            event.currentTarget.classList.add('selected');
+            
+            // Mettre à jour la valeur cachée
+            document.getElementById(`${materialType}-conformite`).value = value;
+            
+            // Masquer le message d'erreur
+            document.getElementById(`${materialType}-conformite-error`).classList.remove('show');
+            
+            // Mettre à jour la couleur de l'icône dans le bouton du menu si c'est un ajout
+            updateAddButtonStatus(materialType, value);
+        };
+        
+        // Fonction pour vérifier la conformité avant d'ajouter un matériel
+        window.checkConformite = function(materialType) {
+            const conformiteField = document.getElementById(`${materialType}-conformite`);
+            const errorElement = document.getElementById(`${materialType}-conformite-error`);
+            
+            if (!conformiteField.value) {
+                // Afficher l'erreur
+                errorElement.classList.add('show');
+                
+                // Animation pour attirer l'attention
+                errorElement.style.animation = 'none';
+                setTimeout(() => {
+                    errorElement.style.animation = 'shake 0.5s ease';
+                }, 10);
+                
+                // Faire clignoter la section
+                const selector = document.querySelector(`#add-${materialType}-modal .conformite-selector`);
+                selector.style.borderColor = 'var(--danger)';
+                selector.style.boxShadow = '0 0 0 2px rgba(198, 40, 40, 0.2)';
+                
+                setTimeout(() => {
+                    selector.style.borderColor = '';
+                    selector.style.boxShadow = '';
+                }, 1000);
+                
+                return false;
+            }
+            
+            return true;
+        };
+        
+        // Fonction pour réinitialiser la sélection de conformité
+        window.resetConformite = function(materialType) {
+            const options = document.querySelectorAll(`#add-${materialType}-modal .conformite-option`);
+            options.forEach(option => {
+                option.classList.remove('selected');
+            });
+            
+            document.getElementById(`${materialType}-conformite`).value = '';
+            document.getElementById(`${materialType}-conformite-error`).classList.remove('show');
+        };
+        
+        // Fonction pour mettre à jour le statut du bouton d'ajout
+        window.updateAddButtonStatus = function(materialType, value) {
+            // Cette fonction peut être utilisée pour mettre à jour l'interface
+            // en fonction de la conformité sélectionnée
+            console.log(`Conformité ${materialType} mise à jour: ${value}`);
+            
+            // Exemple: Changer la couleur du bouton d'ajout
+            const addButton = document.querySelector(`#add-${materialType}-modal .btn-success`);
+            if (addButton) {
+                if (value === 'conforme') {
+                    addButton.style.background = 'var(--success)';
+                } else if (value === 'non-conforme') {
+                    addButton.style.background = 'var(--warning)';
+                }
+            }
+        };
+        
+        // ==================== MODIFICATIONS DES FONCTIONS EXISTANTES ====================
+        
+        // Modifier la fonction addExtincteurToList pour vérifier la conformité
+        window.originalAddExtincteurToList = window.addExtincteurToList;
+        window.addExtincteurToList = function() {
+            // Vérifier la conformité avant de continuer
+            if (!checkConformite('extincteur')) {
+                return;
+            }
+            
+            // Appeler la fonction originale si la conformité est OK
+            originalAddExtincteurToList();
+        };
+        
+        // Modifier la fonction addRIAtoList pour vérifier la conformité
+        window.originalAddRIAtoList = window.addRIAtoList;
+        window.addRIAtoList = function() {
+            // Vérifier la conformité avant de continuer
+            if (!checkConformite('ria')) {
+                return;
+            }
+            
+            // Appeler la fonction originale si la conformité est OK
+            originalAddRIAtoList();
+        };
+        
+        // Modifier la fonction addBAEStoList pour vérifier la conformité
+        window.originalAddBAEStoList = window.addBAEStoList;
+        window.addBAEStoList = function() {
+            // Vérifier la conformité avant de continuer
+            if (!checkConformite('baes')) {
+                return;
+            }
+            
+            // Appeler la fonction originale si la conformité est OK
+            originalAddBAEStoList();
+        };
+        
+        // Modifier la fonction addAlarmeToList pour vérifier la conformité
+        window.originalAddAlarmeToList = window.addAlarmeToList;
+        window.addAlarmeToList = function() {
+            // Vérifier la conformité avant de continuer
+            if (!checkConformite('alarme')) {
+                return;
+            }
+            
+            // Appeler la fonction originale si la conformité est OK
+            originalAddAlarmeToList();
+        };
+        
+        // ==================== FONCTIONS POUR RÉINITIALISER LES MODALES ====================
+        
+        // Fonction pour réinitialiser complètement une modale
+        window.resetModal = function(materialType) {
+            // Réinitialiser la conformité
+            resetConformite(materialType);
+            
+            // Vous pouvez ajouter ici d'autres réinitialisations si nécessaire
+            console.log(`Modal ${materialType} réinitialisée`);
+        };
+        
+        // S'assurer que les modales sont réinitialisées à l'ouverture
+        document.addEventListener('DOMContentLoaded', function() {
+            // Ajouter des écouteurs d'événements pour réinitialiser à l'ouverture des modales
+            const modals = ['extincteur', 'ria', 'baes', 'alarme'];
+            
+            modals.forEach(materialType => {
+                const modal = document.getElementById(`add-${materialType}-modal`);
+                if (modal) {
+                    // Observer l'ouverture de la modal
+                    const observer = new MutationObserver(function(mutations) {
+                        mutations.forEach(function(mutation) {
+                            if (mutation.attributeName === 'class') {
+                                if (modal.classList.contains('active')) {
+                                    // Modal ouverte, réinitialiser la conformité
+                                    resetConformite(materialType);
+                                }
+                            }
+                        });
+                    });
+                    
+                    observer.observe(modal, { attributes: true });
+                }
+            });
+        });
+        
+        // ==================== ANIMATION SHAKE POUR LES ERREURS ====================
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes shake {
+                0%, 100% { transform: translateX(0); }
+                10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+                20%, 40%, 60%, 80% { transform: translateX(5px); }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        console.log('✅ Fonctions de conformité initialisées');
+    </script>
+
     <script src="app.js"></script>
-    <script src="pdf-generator.js"></script>
-    <script src="firecheck-manager.js"></script>
+
 </body>
 </html>
