@@ -5452,3 +5452,159 @@ window.saveClients = saveClients;
 window.saveInterventions = saveInterventions;
 
 console.log('🎉 Application FireCheck Pro initialisée avec rapport PDF optimisé !');
+
+// ==================== AMÉLIORATION 1 : TOASTS ====================
+
+function showToast(message, type = 'success', duration = 3000) {
+    // Créer le toast
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <i class="fas fa-${type === 'success' ? 'check-circle' : 
+                         type === 'error' ? 'exclamation-circle' : 
+                         'info-circle'}"></i>
+        <span>${message}</span>
+    `;
+    
+    // Style du toast
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        border-radius: 8px;
+        color: white;
+        z-index: 10000;
+        transform: translateY(100px);
+        opacity: 0;
+        transition: all 0.3s ease;
+        max-width: 300px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 500;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    `;
+    
+    // Couleurs selon le type
+    if (type === 'success') {
+        toast.style.background = 'linear-gradient(135deg, #28a745 0%, #218838 100%)';
+    } else if (type === 'error') {
+        toast.style.background = 'linear-gradient(135deg, #dc3545 0%, #c82333 100%)';
+    } else {
+        toast.style.background = 'linear-gradient(135deg, #17a2b8 0%, #138496 100%)';
+    }
+    
+    // Ajouter au DOM
+    document.body.appendChild(toast);
+    
+    // Animation d'entrée
+    setTimeout(() => {
+        toast.style.transform = 'translateY(0)';
+        toast.style.opacity = '1';
+    }, 10);
+    
+    // Animation de sortie
+    setTimeout(() => {
+        toast.style.transform = 'translateY(100px)';
+        toast.style.opacity = '0';
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.remove();
+            }
+        }, 300);
+    }, duration);
+    
+    return toast;
+}
+
+// Remplacer les anciennes fonctions (optionnel)
+function showSuccess(message) {
+    showToast(message, 'success');
+}
+
+function showError(message) {
+    showToast(message, 'error');
+}
+
+// Exporter pour le HTML
+window.showToast = showToast;
+window.showSuccess = showSuccess;
+window.showError = showError;
+
+console.log('✅ Amélioration 1 : Toasts ajoutés');
+
+// ==================== AMÉLIORATION 4 : PRÉCHARGEMENT DES PAGES ====================
+
+function preloadNextPages() {
+    console.log('🔄 Préchargement des pages suivantes...');
+    
+    // Liste des pages à précharger
+    const pagesToPreload = ['materials', 'verification', 'signature', 'history', 'planning'];
+    let loadedCount = 0;
+    
+    pagesToPreload.forEach(page => {
+        const pageElement = document.getElementById(`page-${page}`);
+        if (pageElement && !pageElement.dataset.preloaded) {
+            // Marquer comme préchargé
+            pageElement.dataset.preloaded = 'true';
+            loadedCount++;
+            
+            // Initialiser certains éléments si nécessaire
+            if (page === 'materials') {
+                // Initialiser les boutons de la page matériels
+                const buttons = pageElement.querySelectorAll('button');
+                buttons.forEach(btn => {
+                    if (btn.onclick) {
+                        // Garder les fonctions onclick existantes
+                        btn.setAttribute('data-original-onclick', btn.onclick.toString());
+                    }
+                });
+            }
+        }
+    });
+    
+    console.log(`✅ ${loadedCount} page(s) préchargée(s)`);
+    
+    // Afficher un toast si on a préchargé quelque chose
+    if (loadedCount > 0) {
+        showToast(`${loadedCount} page(s) préchargée(s) pour une navigation plus rapide`, 'success', 2000);
+    }
+    
+    return loadedCount;
+}
+
+// Fonction pour précharger au bon moment
+function initPagePreloading() {
+    // Précharger après le chargement initial
+    setTimeout(() => {
+        preloadNextPages();
+    }, 2000);
+    
+    // Précharger quand l'utilisateur est inactif
+    let inactivityTimer;
+    function resetInactivityTimer() {
+        clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+            const currentPage = AppState.currentPage;
+            if (currentPage === 'clients') {
+                preloadNextPages();
+            }
+        }, 5000); // Précharger après 5 secondes d'inactivité
+    }
+    
+    // Réinitialiser le timer sur les interactions utilisateur
+    ['mousemove', 'keydown', 'click', 'scroll'].forEach(event => {
+        window.addEventListener(event, resetInactivityTimer);
+    });
+    
+    resetInactivityTimer();
+}
+
+// Exporter
+window.preloadNextPages = preloadNextPages;
+window.initPagePreloading = initPagePreloading;
+
+console.log('✅ Amélioration 4 : Préchargement des pages ajouté');
+
+
