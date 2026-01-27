@@ -1,5 +1,5 @@
 // FireCheck Pro - Application PWA de vérification sécurité incendie
-// Version optimisée avec jsPDF pour la génération de PDF
+// Version optimisée avec système de vérification annuelle simplifié
 // ==================== CONFIGURATION ====================
 const CONFIG = {
     localStorageKeys: {
@@ -22,19 +22,20 @@ const CONFIG = {
             secondary: [100, 100, 100],
             success: [50, 168, 82],
             danger: [220, 53, 69],
-            warning: [255, 193, 7]
+            warning: [255, 193, 7],
+            info: [13, 110, 253]
         }
     },
     responsiveBreakpoints: {
         mobile: 768,
         tablet: 1024
     },
-    familyFilters: ['all', 'extincteur', 'ria', 'baes', 'alarme'],
+    familyFilters: ['extincteur', 'ria', 'baes', 'alarme'],
     
     // Configurations IndexedDB
     indexedDB: {
         name: 'FireCheckProDB',
-        version: 3,
+        version: 4,
         stores: {
             clients: 'clients',
             materials: 'materials',
@@ -48,16 +49,16 @@ const CONFIG = {
     // Synchronisation
     sync: {
         enabled: true,
-        interval: 300000, // 5 minutes
+        interval: 300000,
         retryAttempts: 3,
         retryDelay: 5000
     },
     
-    // Sauvegarde automatique (DÉSACTIVÉE)
+    // Sauvegarde automatique
     autoSave: {
-        enabled: false,
-        interval: 60000,
-        onUnload: false
+        enabled: true,
+        interval: 30000,
+        onUnload: true
     },
     
     // Gestion hors ligne
@@ -81,11 +82,12 @@ const AppState = {
     fraisDeplacement: 0,
     factureNumero: '',
     currentEditingInterventionId: null,
-    currentFamilyFilter: ['all'],
+    currentFamilyFilter: ['extincteur', 'ria', 'baes', 'alarme'], // Par défaut toutes les familles
     currentAlarmePhotos: [],
     materials: [],
     currentVerificationIndex: null,
     currentVerificationPhotos: [],
+    verifiedMaterialsForReport: [],
     
     // Nouvelles propriétés
     db: null,
@@ -96,7 +98,12 @@ const AppState = {
     offlineMode: false,
     
     // Variables pour le calendrier
-    calendarEvents: []
+    calendarEvents: [],
+    
+    // Gestion des performances
+    lastOperationTime: null,
+    operationQueue: [],
+    isProcessing: false
 };
 
 // ==================== PADS DE SIGNATURE ====================
@@ -153,11 +160,13 @@ class DatabaseManager {
                             case 'clients':
                                 store.createIndex('name', 'name', { unique: false });
                                 store.createIndex('createdDate', 'createdDate', { unique: false });
+                                store.createIndex('lastVerificationYear', 'lastVerificationYear', { unique: false });
                                 break;
                             case 'materials':
                                 store.createIndex('clientId', 'clientId', { unique: false });
                                 store.createIndex('type', 'type', { unique: false });
                                 store.createIndex('verified', 'verified', { unique: false });
+                                store.createIndex('verificationYear', 'verificationYear', { unique: false });
                                 break;
                             case 'interventions':
                                 store.createIndex('clientId', 'clientId', { unique: false });
@@ -661,6 +670,9 @@ async function initApp() {
         addLogoutButton();
         addDataManagementCSS();
         
+        // Ajouter le CSS simplifié pour la vérification
+        addSimpleVerificationCSS();
+        
         navigateTo(AppState.currentPage || 'clients');
         
         setTimeout(addDataManagementUI, 1000);
@@ -669,6 +681,9 @@ async function initApp() {
         showDataStats();
         
         console.log('FireCheck Pro initialisé avec succès');
+        
+        // Initialiser le préchargement des pages
+        initPagePreloading();
         
     } catch (error) {
         console.error('Erreur initialisation:', error);
@@ -685,6 +700,7 @@ function initComponents() {
     generateCalendar(AppState.currentMonth, AppState.currentYear);
     loadCalendarEvents();
     generateFactureNumber();
+    initVerificationPage();
 }
 
 function initPWA() {
@@ -1051,11 +1067,10 @@ function executePageActions(page) {
             break;
         case 'materials':
             updateClientInfoBadge();
-            displayMaterialsList();
+            displayMaterialsListSimplified();
             break;
         case 'verification':
             updateClientInfoBadge();
-            resetVerificationsForNewYear();
             displayVerificationList();
             break;
         case 'signature':
@@ -1205,6 +1220,7 @@ function createClientObject(formData) {
         phone: formData.phone.trim(),
         notes: formData.notes.trim(),
         createdDate: new Date().toISOString(),
+        lastVerificationYear: null,
         materials: [],
         interventions: []
     };
@@ -1322,7 +1338,7 @@ function selectClient(client) {
     updateClientInfoBadge();
     
     if (AppState.currentPage === 'materials') {
-        displayMaterialsList();
+        displayMaterialsListSimplified();
     }
     
     if (AppState.currentPage === 'verification') {
@@ -1367,7 +1383,7 @@ function deleteClient(clientId, event) {
             updateClientInfoBadge();
             
             if (AppState.currentPage === 'materials' || AppState.currentPage === 'verification') {
-                displayMaterialsList();
+                displayMaterialsListSimplified();
                 displayVerificationList();
             }
         }
@@ -1398,7 +1414,7 @@ function updateBadge(badgeId, client, defaultText, showCount = false) {
     }
 }
 
-// ==================== GESTION DES MATÉRIELS ====================
+// ==================== GESTION DES MATÉRIELS (PAGE SIMPLIFIÉE) ====================
 function openMaterialModal(type) {
     if (!AppState.currentClient) {
         showError('Veuillez d\'abord sélectionner un client');
@@ -1427,80 +1443,1155 @@ function openMaterialModal(type) {
     }
 }
 
-function resetExtincteurForm() {
-    const today = new Date().toISOString().split('T')[0];
-    const nextYear = new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0];
+function displayMaterialsListSimplified() {
+    const materialsList = document.getElementById('materials-list');
+    const materialsCountBadge = document.getElementById('materials-count-badge');
     
-    setElementValue('extincteur-id', '');
-    setElementValue('extincteur-location', '');
-    setElementValue('extincteur-type', '');
-    setElementValue('extincteur-fabricant', '');
-    setElementValue('extincteur-modele', '');
-    setElementValue('extincteur-annee', new Date().getFullYear());
-    setElementValue('extincteur-capacite', '');
-    setElementValue('extincteur-pesee', '');
-    setElementValue('extincteur-observations', '');
-    setElementValue('extincteur-etat-general-comment', '');
-    setElementValue('extincteur-date-controle', today);
-    setElementValue('extincteur-prochain-controle', nextYear);
+    if (!materialsList) return;
     
-    resetOkNokFields(['etat-general', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite']);
-    setCheckboxValue('extincteur-maa', false);
-    setCheckboxValue('extincteur-eiee', false);
-    setCheckboxValue('extincteur-recharge', false);
-    setCheckboxValue('extincteur-scelle', false);
-    setCheckboxValue('extincteur-remplacement-joint', false);
-    
-    selectExtincteurInterventionType('verification');
-    clearPhotoGallery('extincteur-photo-gallery');
-    updateModalButton('add-extincteur-modal', 'Ajouter', addExtincteurToList);
-}
-
-function addExtincteurToList() {
-    if (!validateMaterialForm('extincteur')) {
+    if (!AppState.currentClient || !AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
+        showEmptyState(materialsList, 'materials');
+        if (materialsCountBadge) {
+            materialsCountBadge.textContent = '0';
+        }
         return;
     }
     
-    const extincteur = createExtincteurObject();
-    addMaterialToList(extincteur);
-    closeModal('add-extincteur-modal');
-    showSuccess('Extincteur ajouté avec succès');
+    const materials = AppState.currentClient.materials;
+    if (materialsCountBadge) {
+        materialsCountBadge.textContent = materials.length;
+    }
+    
+    materialsList.innerHTML = materials.map((material, index) => createMaterialListItemSimplified(material, index)).join('');
 }
 
-function createExtincteurObject() {
+function createMaterialListItemSimplified(material, index) {
+    const materialInfo = getMaterialInfo(material.type);
+    
+    return `
+        <div class="compact-material-item ${materialInfo.class}">
+            <div class="compact-material-info">
+                <div class="compact-material-name">
+                    <i class="fas ${materialInfo.icon}"></i>
+                    ${materialInfo.text} - ${material.id || material.numero}
+                </div>
+                <div class="compact-material-details">
+                    ${material.localisation || material.location || 'Non spécifié'}
+                    ${material.annee ? ` • Année: ${material.annee}` : ''}
+                </div>
+            </div>
+            <div class="compact-material-actions">
+                <button class="btn btn-sm btn-primary" onclick="editMaterial(${index})" 
+                        title="Modifier la fiche">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-sm btn-danger" onclick="removeMaterialPermanent(${index})" 
+                        title="Supprimer définitivement">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function removeMaterialPermanent(index) {
+    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
+        showError("Matériel non trouvé");
+        return;
+    }
+    
+    const material = AppState.currentClient.materials[index];
+    
+    if (!confirm(`Voulez-vous vraiment supprimer définitivement ${material.id || material.numero} ?`)) {
+        return;
+    }
+    
+    AppState.currentClient.materials.splice(index, 1);
+    saveCurrentClientChanges();
+    displayMaterialsListSimplified();
+    
+    // Rafraîchir aussi la liste de vérification si on est sur cette page
+    if (AppState.currentPage === 'verification') {
+        displayVerificationList();
+    }
+    
+    showSuccess(`Matériel supprimé définitivement`);
+}
+
+// ==================== INITIALISATION DE LA PAGE DE VÉRIFICATION ====================
+function initVerificationPage() {
+    const filterContainer = document.getElementById('verification-filters');
+    if (filterContainer) {
+        filterContainer.innerHTML = `
+            <div class="verification-header">
+                <h3><i class="fas fa-filter"></i> Filtres de vérification</h3>
+                <div class="filter-counters">
+                    <span id="filter-stats">Chargement...</span>
+                </div>
+            </div>
+            <div class="filter-buttons-grid">
+                <div class="filter-button-item" data-family="extincteur">
+                    <button class="filter-btn ${AppState.currentFamilyFilter.includes('extincteur') ? 'active' : ''}" 
+                            onclick="toggleFamilyFilter('extincteur')">
+                        <i class="fas fa-fire-extinguisher"></i>
+                        <span>Extincteurs</span>
+                        <span class="filter-count" id="count-extincteur">0</span>
+                    </button>
+                </div>
+                <div class="filter-button-item" data-family="ria">
+                    <button class="filter-btn ${AppState.currentFamilyFilter.includes('ria') ? 'active' : ''}" 
+                            onclick="toggleFamilyFilter('ria')">
+                        <i class="fas fa-faucet"></i>
+                        <span>RIA</span>
+                        <span class="filter-count" id="count-ria">0</span>
+                    </button>
+                </div>
+                <div class="filter-button-item" data-family="baes">
+                    <button class="filter-btn ${AppState.currentFamilyFilter.includes('baes') ? 'active' : ''}" 
+                            onclick="toggleFamilyFilter('baes')">
+                        <i class="fas fa-lightbulb"></i>
+                        <span>BAES</span>
+                        <span class="filter-count" id="count-baes">0</span>
+                    </button>
+                </div>
+                <div class="filter-button-item" data-family="alarme">
+                    <button class="filter-btn ${AppState.currentFamilyFilter.includes('alarme') ? 'active' : ''}" 
+                            onclick="toggleFamilyFilter('alarme')">
+                        <i class="fas fa-bell"></i>
+                        <span>Alarmes</span>
+                        <span class="filter-count" id="count-alarme">0</span>
+                    </button>
+                </div>
+            </div>
+            <div class="filter-actions">
+                <button class="filter-action-btn select-all-btn" onclick="selectAllFamilies()">
+                    <i class="fas fa-check-double"></i> <span>Tout sélectionner</span>
+                </button>
+                <button class="filter-action-btn clear-all-btn" onclick="clearAllFamilies()">
+                    <i class="fas fa-times"></i> <span>Tout désélectionner</span>
+                </button>
+            </div>
+            <div class="search-container">
+                <input type="text" id="verification-search" class="search-input" 
+                       placeholder="Rechercher un matériel..." oninput="searchVerificationMaterials()">
+                <i class="fas fa-search search-icon"></i>
+            </div>
+        `;
+    }
+    
+    const actionContainer = document.getElementById('verification-actions');
+    if (actionContainer) {
+        actionContainer.innerHTML = `
+            <div class="verification-stats-grid">
+                <div class="stat-item">
+                    <div class="stat-label">Total</div>
+                    <div class="stat-value" id="total-count">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Vérifiés</div>
+                    <div class="stat-value verified-count" id="verified-count">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">À vérifier</div>
+                    <div class="stat-value pending-count" id="pending-count">0</div>
+                </div>
+            </div>
+            <button id="finish-verification-btn" class="btn btn-success" onclick="finishVerification()" disabled>
+                <i class="fas fa-check-circle"></i> <span>Terminer la vérification</span>
+            </button>
+        `;
+    }
+}
+
+function addSimpleVerificationCSS() {
+    const style = document.createElement('style');
+    style.textContent = `
+        /* Style simplifié pour la vérification */
+        .compact-material-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 15px;
+            margin-bottom: 10px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #ccc;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        .compact-material-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        /* Extincteur */
+        .compact-material-item.extincteur {
+            border-left-color: #e74c3c;
+        }
+        
+        /* RIA */
+        .compact-material-item.ria {
+            border-left-color: #3498db;
+        }
+        
+        /* BAES */
+        .compact-material-item.baes {
+            border-left-color: #f39c12;
+        }
+        
+        /* Alarme */
+        .compact-material-item.alarme {
+            border-left-color: #9b59b6;
+        }
+        
+        /* Informations du matériel */
+        .compact-material-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .compact-material-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 5px;
+        }
+        
+        .compact-material-header i.fas {
+            color: #6c757d;
+        }
+        
+        .compact-material-header strong {
+            font-size: 1.1em;
+            color: #2c3e50;
+        }
+        
+        .material-family-badge {
+            background: #e9ecef;
+            color: #495057;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 500;
+        }
+        
+        .material-status {
+            font-size: 0.8em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .material-status.status-success {
+            color: #28a745;
+        }
+        
+        .material-status.status-warning {
+            color: #ffc107;
+        }
+        
+        .compact-material-details {
+            font-size: 0.9em;
+            color: #6c757d;
+            line-height: 1.4;
+        }
+        
+        .compact-material-details div {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 3px;
+        }
+        
+        .compact-material-details i {
+            width: 16px;
+            color: #adb5bd;
+        }
+        
+        .verification-date {
+            font-size: 0.85em;
+            color: #28a745;
+            margin-top: 3px;
+        }
+        
+        /* Boutons d'action */
+        .compact-material-actions {
+            display: flex;
+            align-items: center;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .action-buttons button {
+            width: 40px;
+            height: 40px;
+            border-radius: 6px;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 1em;
+        }
+        
+        .action-buttons button:hover {
+            transform: scale(1.1);
+        }
+        
+        /* Bouton Modifier */
+        .btn-edit {
+            background: #3498db;
+            color: white;
+        }
+        
+        .btn-edit:hover {
+            background: #2980b9;
+        }
+        
+        /* Bouton Valider */
+        .btn-validate {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-validate:hover {
+            background: #218838;
+        }
+        
+        /* Bouton Déjà validé */
+        .btn-validated {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-validated:hover {
+            background: #5a6268;
+        }
+        
+        /* Bouton Supprimer */
+        .btn-delete {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-delete:hover {
+            background: #c82333;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .compact-material-item {
+                flex-direction: column;
+                align-items: stretch;
+                padding: 10px;
+            }
+            
+            .compact-material-header {
+                flex-wrap: wrap;
+                gap: 5px;
+            }
+            
+            .compact-material-header strong {
+                font-size: 1em;
+            }
+            
+            .material-family-badge {
+                font-size: 0.7em;
+                padding: 1px 6px;
+            }
+            
+            .material-status {
+                font-size: 0.75em;
+            }
+            
+            .compact-material-details {
+                font-size: 0.85em;
+                margin-bottom: 10px;
+            }
+            
+            .compact-material-actions {
+                justify-content: flex-end;
+            }
+            
+            .action-buttons {
+                width: 100%;
+                justify-content: flex-end;
+            }
+            
+            .action-buttons button {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9em;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .compact-material-item {
+                padding: 8px;
+            }
+            
+            .action-buttons button {
+                width: 32px;
+                height: 32px;
+                font-size: 0.85em;
+            }
+            
+            .compact-material-header {
+                font-size: 0.9em;
+            }
+            
+            .compact-material-details {
+                font-size: 0.8em;
+            }
+        }
+    `;
+    
+    // Vérifier si le style n'a pas déjà été ajouté
+    if (!document.getElementById('simple-verification-css')) {
+        style.id = 'simple-verification-css';
+        document.head.appendChild(style);
+    }
+}
+
+// ==================== CSS RESPONSIVE POUR LA VÉRIFICATION ====================
+function addResponsiveVerificationCSS() {
+    const style = document.createElement('style');
+    style.textContent = `
+        /* Styles pour les écrans mobiles */
+        @media (max-width: 768px) {
+            /* Ajustement des filtres */
+            .filter-buttons-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 8px;
+            }
+            
+            .filter-btn {
+                padding: 12px 8px;
+                font-size: 0.8em;
+            }
+            
+            .filter-btn i {
+                font-size: 1.2em;
+            }
+            
+            .filter-count {
+                top: -6px;
+                right: -6px;
+                font-size: 0.7em;
+                padding: 1px 4px;
+                min-width: 18px;
+            }
+            
+            .verification-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            
+            .verification-header h3 {
+                font-size: 1.1rem;
+            }
+            
+            .filter-counters {
+                font-size: 0.85rem;
+            }
+            
+            .filter-actions {
+                flex-direction: column;
+                gap: 8px;
+            }
+            
+            .filter-action-btn {
+                width: 100%;
+                padding: 10px;
+            }
+            
+            /* Ajustement des statistiques */
+            .verification-stats-grid {
+                grid-template-columns: repeat(3, 1fr) !important;
+                gap: 8px;
+            }
+            
+            .stat-item {
+                padding: 8px 4px;
+            }
+            
+            .stat-label {
+                font-size: 0.75em;
+            }
+            
+            .stat-value {
+                font-size: 1.2em;
+            }
+            
+            #verification-actions {
+                flex-direction: column;
+                gap: 15px;
+                padding: 15px;
+            }
+            
+            #finish-verification-btn {
+                width: 100%;
+                padding: 10px 16px;
+                font-size: 0.9em;
+            }
+            
+            /* Optimisation des boutons d'action dans la liste */
+            .compact-material-actions.verification-actions {
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 4px;
+                min-width: 50px;
+            }
+            
+            .compact-material-actions.verification-actions button {
+                padding: 6px 8px;
+                font-size: 0.85em;
+                min-width: 40px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+            
+            .compact-material-actions.verification-actions button i {
+                margin: 0;
+                font-size: 0.9em;
+            }
+            
+            .verification-item-actions {
+                flex-direction: column;
+                gap: 4px;
+            }
+            
+            .remove-from-verification-btn {
+                width: 28px;
+                height: 28px;
+            }
+            
+            /* Ajustement du contenu des matériels */
+            .compact-material-item {
+                padding: 10px;
+            }
+            
+            .compact-material-info {
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+            }
+            
+            .compact-material-name {
+                flex-wrap: wrap;
+                gap: 4px;
+                margin-bottom: 4px;
+            }
+            
+            .material-family-badge {
+                font-size: 0.7em;
+                padding: 1px 6px;
+                margin-left: 6px;
+            }
+            
+            .material-status {
+                font-size: 0.8em;
+                margin-top: 4px;
+                width: 100%;
+            }
+            
+            .compact-material-details {
+                font-size: 0.8em;
+                line-height: 1.3;
+            }
+            
+            .compact-material-details div {
+                margin-bottom: 2px;
+            }
+            
+            .verification-date {
+                font-size: 0.75em;
+                margin-top: 2px;
+            }
+            
+            /* Cacher le texte des boutons sur mobile très petit */
+            @media (max-width: 480px) {
+                .filter-buttons-grid {
+                    grid-template-columns: 1fr !important;
+                }
+                
+                .filter-btn span,
+                .filter-action-btn span,
+                #finish-verification-btn span {
+                    display: none;
+                }
+                
+                .filter-btn {
+                    padding: 12px;
+                    height: 70px;
+                    justify-content: center;
+                }
+                
+                .filter-btn i {
+                    font-size: 1.4em;
+                    margin-bottom: 4px;
+                }
+                
+                .filter-count {
+                    top: -4px;
+                    right: -4px;
+                }
+                
+                .compact-material-name strong {
+                    font-size: 0.9em;
+                }
+                
+                .compact-material-details {
+                    font-size: 0.75em;
+                }
+                
+                .compact-material-actions.verification-actions button span {
+                    display: none;
+                }
+                
+                .compact-material-actions.verification-actions button {
+                    width: 32px;
+                    height: 32px;
+                    padding: 2px;
+                }
+                
+                .verification-stats-grid {
+                    grid-template-columns: repeat(3, 1fr) !important;
+                }
+                
+                .stat-label {
+                    font-size: 0.7em;
+                }
+                
+                .stat-value {
+                    font-size: 1.1em;
+                }
+            }
+            
+            /* Pour les tablettes */
+            @media (min-width: 481px) and (max-width: 768px) {
+                .filter-buttons-grid {
+                    grid-template-columns: repeat(2, 1fr) !important;
+                }
+                
+                .filter-btn span {
+                    font-size: 0.85em;
+                }
+                
+                .compact-material-actions.verification-actions {
+                    flex-direction: row;
+                    flex-wrap: wrap;
+                    justify-content: flex-end;
+                }
+                
+                .compact-material-actions.verification-actions button {
+                    width: 36px;
+                    height: 36px;
+                }
+                
+                .verification-item-actions {
+                    flex-direction: row;
+                    flex-wrap: wrap;
+                }
+            }
+        }
+        
+        /* Ajustements pour les grands écrans mobiles et tablettes */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .filter-buttons-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+            }
+            
+            .compact-material-actions.verification-actions {
+                display: flex;
+                flex-direction: row;
+                gap: 6px;
+            }
+            
+            .compact-material-actions.verification-actions button {
+                padding: 6px 10px;
+                font-size: 0.85em;
+            }
+            
+            .verification-item-actions {
+                display: flex;
+                flex-direction: row;
+                gap: 6px;
+            }
+            
+            .remove-from-verification-btn {
+                width: 32px;
+                height: 32px;
+            }
+        }
+        
+        /* Pour les grands écrans */
+        @media (min-width: 1025px) {
+            .filter-buttons-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+            
+            .verification-stats-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// ==================== GESTION DES FILTRES DE VÉRIFICATION AMÉLIORÉE ====================
+function toggleFamilyFilter(family) {
+    const index = AppState.currentFamilyFilter.indexOf(family);
+    if (index === -1) {
+        AppState.currentFamilyFilter.push(family);
+    } else {
+        AppState.currentFamilyFilter.splice(index, 1);
+    }
+    
+    // Sauvegarder les filtres
+    localStorage.setItem('verification_filters', JSON.stringify(AppState.currentFamilyFilter));
+    
+    // Mettre à jour les boutons de filtre
+    updateFilterButtons();
+    
+    // Rafraîchir la liste des matériels
+    displayVerificationList();
+}
+
+function selectAllFamilies() {
+    AppState.currentFamilyFilter = [...CONFIG.familyFilters];
+    localStorage.setItem('verification_filters', JSON.stringify(AppState.currentFamilyFilter));
+    updateFilterButtons();
+    displayVerificationList();
+}
+
+function clearAllFamilies() {
+    AppState.currentFamilyFilter = [];
+    localStorage.setItem('verification_filters', JSON.stringify(AppState.currentFamilyFilter));
+    updateFilterButtons();
+    displayVerificationList();
+}
+
+function updateFilterButtons() {
+    const filterButtons = document.querySelectorAll('.filter-btn');
+    filterButtons.forEach(button => {
+        const family = button.closest('.filter-button-item')?.dataset.family;
+        if (family && AppState.currentFamilyFilter.includes(family)) {
+            button.classList.add('active');
+        } else if (family) {
+            button.classList.remove('active');
+        }
+    });
+    
+    updateFilterCounts();
+}
+
+function updateFilterCounts() {
+    if (!AppState.currentClient || !AppState.currentClient.materials) return;
+    
+    const currentYear = new Date().getFullYear();
+    
+    CONFIG.familyFilters.forEach(family => {
+        const materials = AppState.currentClient.materials.filter(m => m.type === family);
+        const verifiedCount = materials.filter(m => {
+            const status = getMaterialVerificationStatus(m, currentYear);
+            return status.verified;
+        }).length;
+        
+        const countElement = document.getElementById(`count-${family}`);
+        if (countElement) {
+            countElement.textContent = materials.length;
+            countElement.title = `${verifiedCount} vérifié(s) sur ${materials.length}`;
+        }
+    });
+    
+    // Mettre à jour les statistiques des filtres
+    const totalFiltered = getFilteredMaterials().length;
+    const totalMaterials = AppState.currentClient.materials.length;
+    const statsElement = document.getElementById('filter-stats');
+    if (statsElement) {
+        statsElement.textContent = `${totalFiltered} matériel(s) sélectionné(s) sur ${totalMaterials}`;
+    }
+}
+
+function searchVerificationMaterials() {
+    displayVerificationList();
+}
+
+// ==================== VÉRIFICATION ANNUELLE - VERSION SIMPLIFIÉE ====================
+function displayVerificationList() {
+    const verificationList = document.getElementById('verification-list');
+    const verificationSearch = document.getElementById('verification-search');
+    
+    if (!verificationList) return;
+    
+    updateClientInfoBadge();
+    
+    if (!AppState.currentClient || !AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
+        showEmptyState(verificationList, 'verification');
+        updateVerificationStats(0, 0, 0);
+        updateFilterCounts();
+        updateFinishButton();
+        return;
+    }
+    
+    const searchTerm = verificationSearch ? verificationSearch.value.toLowerCase() : '';
+    
+    // Obtenir les matériels filtrés
+    const filteredMaterials = getFilteredMaterials(searchTerm);
+    
+    if (filteredMaterials.length === 0) {
+        showEmptyState(verificationList, 'verification');
+        updateVerificationStats(0, 0, 0);
+        updateFilterCounts();
+        updateFinishButton();
+        return;
+    }
+    
+    // Calculer les statistiques
+    const currentYear = new Date().getFullYear();
+    let verifiedCount = 0;
+    
+    verificationList.innerHTML = filteredMaterials.map((material, originalIndex) => {
+        // Trouver l'index original dans la liste complète
+        const originalFullIndex = AppState.currentClient.materials.findIndex(m => m.id === material.id);
+        
+        const materialInfo = getMaterialInfo(material.type);
+        const status = getMaterialVerificationStatus(material, currentYear);
+        const isVerified = status.verified;
+        
+        if (isVerified) verifiedCount++;
+        
+        // Formatage simplifié des informations du matériel
+        const location = material.localisation || material.location || 'Non spécifié';
+        const type = material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || 'Type non spécifié';
+        const annee = material.annee ? ` • Année: ${material.annee}` : '';
+        const verificationDate = status.currentVerification?.dateVerification 
+            ? `<div class="verification-date"><i class="fas fa-calendar-check"></i> Vérifié le ${formatDate(status.currentVerification.dateVerification)}</div>`
+            : '';
+        
+        // Couleur et texte de statut
+        const statusColor = isVerified ? 'success' : 'warning';
+        const statusText = isVerified ? 'Vérifié' : 'À vérifier';
+        const statusIcon = isVerified ? 'fa-check-circle' : 'fa-clock';
+        
+        return `
+            <div class="compact-material-item ${materialInfo.class}" id="verif-material-${originalFullIndex}">
+                <div class="compact-material-info">
+                    <div class="compact-material-header">
+                        <i class="fas ${materialInfo.icon}"></i>
+                        <strong>${material.id || material.numero}</strong>
+                        <span class="material-family-badge">${materialInfo.text}</span>
+                        <span class="material-status status-${statusColor}">
+                            <i class="fas ${statusIcon}"></i> ${statusText}
+                        </span>
+                    </div>
+                    <div class="compact-material-details">
+                        <div><i class="fas fa-map-marker-alt"></i> ${location}</div>
+                        <div><i class="fas fa-tag"></i> ${type}${annee}</div>
+                        ${verificationDate}
+                    </div>
+                </div>
+                <div class="compact-material-actions">
+                    <div class="action-buttons">
+                        <!-- Bouton Modifier -->
+                        <button class="btn btn-sm btn-edit" onclick="editMaterial(${originalFullIndex})" 
+                                title="Modifier le matériel">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        
+                        <!-- Bouton Valider/Annuler validation -->
+                        <button class="btn btn-sm ${isVerified ? 'btn-validated' : 'btn-validate'}" 
+                                onclick="${isVerified ? 'resetMaterialVerification' : 'verifyMaterial'}(${originalFullIndex})" 
+                                title="${isVerified ? 'Annuler la validation' : 'Valider le matériel'}">
+                            <i class="fas ${isVerified ? 'fa-undo' : 'fa-check'}"></i>
+                        </button>
+                        
+                        <!-- Bouton Supprimer -->
+                        <button class="btn btn-sm btn-delete" onclick="removeFromVerification(${originalFullIndex})" 
+                                title="Retirer de la vérification">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Mettre à jour les statistiques
+    const pendingCount = filteredMaterials.length - verifiedCount;
+    updateVerificationStats(filteredMaterials.length, verifiedCount, pendingCount);
+    
+    // Mettre à jour les compteurs de filtres
+    updateFilterCounts();
+    
+    // Mettre à jour le bouton de fin
+    updateFinishButton();
+}
+
+function getFilteredMaterials(searchTerm = '') {
+    if (!AppState.currentClient || !AppState.currentClient.materials) return [];
+    
+    // Filtrer par famille
+    let filtered = AppState.currentClient.materials.filter(material => {
+        if (AppState.currentFamilyFilter.length === 0) return false;
+        return AppState.currentFamilyFilter.includes(material.type);
+    });
+    
+    // Filtrer par recherche
+    if (searchTerm) {
+        filtered = filtered.filter(material => {
+            const searchableFields = [
+                material.id || material.numero || '',
+                material.localisation || material.location || '',
+                material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || '',
+                material.observations || ''
+            ];
+            
+            return searchableFields.some(field => 
+                field.toLowerCase().includes(searchTerm)
+            );
+        });
+    }
+    
+    return filtered;
+}
+
+// ==================== BOUTON SUPPRIMER DE LA VÉRIFICATION ====================
+function removeFromVerification(index) {
+    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
+        showError("Matériel non trouvé");
+        return;
+    }
+    
+    const material = AppState.currentClient.materials[index];
+    const materialInfo = getMaterialInfo(material.type);
+    
+    if (!confirm(`Voulez-vous retirer le ${materialInfo.text.toLowerCase()} ${material.id || material.numero} de la vérification en cours ?
+
+⚠️ Cette action :
+• Retire le matériel de la vérification en cours
+• Le matériel reste dans la liste du client
+• Ne supprime pas le matériel définitivement
+
+Pour supprimer définitivement le matériel, utilisez le bouton "Supprimer" dans la page des matériels.`)) {
+        return;
+    }
+    
+    // Réinitialiser la vérification pour l'année en cours
+    const currentYear = new Date().getFullYear();
+    updateMaterialVerification(material, currentYear, false);
+    
+    saveCurrentClientChanges();
+    refreshAllLists();
+    
+    showSuccess(`${materialInfo.text} retiré de la vérification en cours`);
+}
+
+function updateVerificationStats(total, verified, pending) {
+    const totalElement = document.getElementById('total-count');
+    const verifiedElement = document.getElementById('verified-count');
+    const pendingElement = document.getElementById('pending-count');
+    
+    if (totalElement) totalElement.textContent = total;
+    if (verifiedElement) verifiedElement.textContent = verified;
+    if (pendingElement) pendingElement.textContent = pending;
+}
+
+function updateFinishButton() {
+    const finishButton = document.getElementById('finish-verification-btn');
+    if (!finishButton) return;
+    
+    const currentYear = new Date().getFullYear();
+    
+    // Obtenir les matériels filtrés
+    const filteredMaterials = getFilteredMaterials();
+    
+    if (filteredMaterials.length === 0) {
+        finishButton.disabled = true;
+        finishButton.title = 'Aucun matériel sélectionné dans les filtres';
+        return;
+    }
+    
+    // Vérifier si tous les matériels filtrés sont vérifiés
+    const allVerified = filteredMaterials.every(material => {
+        const status = getMaterialVerificationStatus(material, currentYear);
+        return status.verified;
+    });
+    
+    finishButton.disabled = !allVerified;
+    finishButton.title = allVerified 
+        ? 'Cliquez pour terminer la vérification et générer le rapport' 
+        : `${filteredMaterials.filter(m => !getMaterialVerificationStatus(m, currentYear).verified).length} matériel(s) restant(s) à vérifier`;
+}
+
+// ==================== FONCTIONS DE VÉRIFICATION ANNUELLE ====================
+function getMaterialVerificationStatus(material, currentYear) {
+    if (!material.verificationHistory || material.verificationHistory.length === 0) {
+        return { verified: false, lastYear: null, currentVerification: null };
+    }
+    
+    const currentVerification = material.verificationHistory.find(v => v.verificationYear === currentYear);
+    
     return {
-        type: 'extincteur',
-        id: getElementValue('extincteur-id'),
-        localisation: getElementValue('extincteur-location'),
-        typeExtincteur: getElementValue('extincteur-type'),
-        fabricant: getElementValue('extincteur-fabricant'),
-        modele: getElementValue('extincteur-modele'),
-        annee: getElementValue('extincteur-annee'),
-        capacite: getElementValue('extincteur-capacite'),
-        dateControle: getElementValue('extincteur-date-controle'),
-        prochainControle: getElementValue('extincteur-prochain-controle'),
-        etatGeneral: getElementValue('extincteur-etat-general'),
-        etatGeneralComment: getElementValue('extincteur-etat-general-comment'),
-        lisibilite: getElementValue('extincteur-lisibilite'),
-        panneau: getElementValue('extincteur-panneau'),
-        goupille: getElementValue('extincteur-goupille'),
-        pression: getElementValue('extincteur-pression'),
-        pesee: getElementValue('extincteur-pesee'),
-        joints: getElementValue('extincteur-joints'),
-        accessibilite: getElementValue('extincteur-accessibilite'),
-        observations: getElementValue('extincteur-observations'),
-        scelle: getCheckboxValue('extincteur-scelle'),
-        remplacementJoint: getCheckboxValue('extincteur-remplacement-joint'),
-        interventionType: getElementValue('extincteur-intervention-type'),
-        interventions: {
-            maa: getCheckboxValue('extincteur-maa'),
-            eiee: getCheckboxValue('extincteur-eiee'),
-            recharge: getCheckboxValue('extincteur-recharge')
-        },
-        photos: [],
-        verified: false,
-        dateVerification: null
+        verified: currentVerification ? currentVerification.verified : false,
+        lastYear: currentVerification ? currentVerification.verificationYear : null,
+        currentVerification: currentVerification
     };
+}
+
+function updateMaterialVerification(material, currentYear, verified = true) {
+    if (!material.verificationHistory) {
+        material.verificationHistory = [];
+    }
+    
+    let currentYearVerification = material.verificationHistory.find(v => v.verificationYear === currentYear);
+    if (!currentYearVerification) {
+        currentYearVerification = {
+            verified: verified,
+            verificationYear: currentYear,
+            dateVerification: verified ? new Date().toISOString().split('T')[0] : null,
+            verifiedBy: verified ? (getElementValue('technician-name') || 'Technicien') : ''
+        };
+        material.verificationHistory.push(currentYearVerification);
+    } else {
+        currentYearVerification.verified = verified;
+        currentYearVerification.dateVerification = verified ? new Date().toISOString().split('T')[0] : null;
+        currentYearVerification.verifiedBy = verified ? (getElementValue('technician-name') || 'Technicien') : '';
+    }
+    
+    return currentYearVerification;
+}
+
+function verifyMaterial(index) {
+    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
+        showError("Matériel non trouvé");
+        return;
+    }
+    
+    const currentYear = new Date().getFullYear();
+    const material = AppState.currentClient.materials[index];
+    const materialInfo = getMaterialInfo(material.type);
+    
+    if (!confirm(`Voulez-vous vraiment valider le ${materialInfo.text.toLowerCase()} ${material.id || material.numero} pour l'année ${currentYear} ?`)) {
+        return;
+    }
+    
+    updateMaterialVerification(material, currentYear, true);
+    
+    // Mettre à jour l'année de dernière vérification du client
+    AppState.currentClient.lastVerificationYear = currentYear;
+    
+    saveCurrentClientChanges();
+    refreshAllLists();
+    
+    showSuccess(`${materialInfo.text} validé pour l'année ${currentYear}`);
+    
+    // Mettre à jour le bouton de fin de vérification
+    updateFinishButton();
+}
+
+function resetMaterialVerification(index) {
+    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
+        showError("Matériel non trouvé");
+        return;
+    }
+    
+    const currentYear = new Date().getFullYear();
+    const material = AppState.currentClient.materials[index];
+    const materialInfo = getMaterialInfo(material.type);
+    
+    if (!confirm(`Voulez-vous re-marquer le ${materialInfo.text.toLowerCase()} ${material.id || material.numero} comme 'à vérifier' pour l'année en cours ?`)) {
+        return;
+    }
+    
+    updateMaterialVerification(material, currentYear, false);
+    
+    saveCurrentClientChanges();
+    refreshAllLists();
+    
+    showSuccess(`${materialInfo.text} marqué comme 'à vérifier'`);
+    
+    // Mettre à jour le bouton de fin de vérification
+    updateFinishButton();
+}
+
+function finishVerification() {
+    const finishButton = document.getElementById('finish-verification-btn');
+    if (finishButton && finishButton.disabled) {
+        showError('Vous devez vérifier tous les matériels sélectionnés dans les filtres avant de terminer');
+        return;
+    }
+    
+    // Préparer les données pour le rapport
+    const prepared = prepareVerificationReport();
+    
+    if (!prepared) {
+        showError('Impossible de préparer le rapport. Vérifiez que des matériels ont été validés.');
+        return;
+    }
+    
+    // Naviguer vers la page de signature
+    navigateTo('signature');
+    showSuccess('Vérification terminée ! Vous pouvez maintenant générer le rapport PDF.');
+}
+
+function prepareVerificationReport() {
+    if (!AppState.currentClient) {
+        showError('Aucun client sélectionné');
+        return false;
+    }
+    
+    const currentYear = new Date().getFullYear();
+    
+    // Filtrer les matériels vérifiés pour l'année en cours (basé sur les filtres actifs)
+    const verifiedMaterials = AppState.currentClient.materials.filter(material => {
+        // Vérifier si le matériel est dans les filtres actifs
+        if (AppState.currentFamilyFilter.length > 0 && 
+            !AppState.currentFamilyFilter.includes(material.type)) {
+            return false;
+        }
+        
+        // Vérifier si le matériel est vérifié pour l'année en cours
+        const status = getMaterialVerificationStatus(material, currentYear);
+        return status.verified;
+    });
+    
+    if (verifiedMaterials.length === 0) {
+        showError('Aucun matériel vérifié dans les filtres sélectionnés');
+        return false;
+    }
+    
+    // Stocker les matériels vérifiés pour le rapport
+    AppState.verifiedMaterialsForReport = verifiedMaterials;
+    
+    // Mettre à jour l'année de dernière vérification du client
+    AppState.currentClient.lastVerificationYear = currentYear;
+    saveCurrentClientChanges();
+    
+    console.log(`${verifiedMaterials.length} matériel(s) vérifié(s) seront inclus dans le rapport`);
+    return true;
+}
+
+// ==================== FONCTIONS DE MATÉRIELS (EXISTANTES) ====================
+function getMaterialInfo(type) {
+    const types = {
+        extincteur: { class: 'extincteur', icon: 'fa-fire-extinguisher', text: 'Extincteur' },
+        ria: { class: 'ria', icon: 'fa-faucet', text: 'RIA' },
+        baes: { class: 'baes', icon: 'fa-lightbulb', text: 'BAES' },
+        alarme: { class: 'alarme', icon: 'fa-bell', text: 'Alarme' }
+    };
+    
+    return types[type] || { class: '', icon: 'fa-question', text: 'Matériel' };
 }
 
 function validateMaterialForm(type) {
@@ -1532,537 +2623,224 @@ function addMaterialToList(material) {
     
     AppState.currentClient.materials.push(material);
     saveCurrentClientChanges();
-    displayMaterialsList();
-}
-
-function displayMaterialsList() {
-    const materialsList = document.getElementById('materials-list');
-    const materialsCountBadge = document.getElementById('materials-count-badge');
+    displayMaterialsListSimplified();
     
-    if (!materialsList) return;
-    
-    if (!AppState.currentClient || !AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
-        showEmptyState(materialsList, 'materials');
-        if (materialsCountBadge) {
-            materialsCountBadge.textContent = '0';
-        }
-        return;
-    }
-    
-    const materials = AppState.currentClient.materials;
-    if (materialsCountBadge) {
-        materialsCountBadge.textContent = materials.length;
-    }
-    
-    materialsList.innerHTML = materials.map((material, index) => createMaterialListItem(material, index)).join('');
-}
-
-function createMaterialListItem(material, index) {
-    const materialInfo = getMaterialInfo(material.type);
-    const isVerified = material.verified;
-    
-    return `
-        <div class="compact-material-item ${materialInfo.class}">
-            <div class="compact-material-info">
-                <div class="compact-material-name">
-                    <i class="fas ${materialInfo.icon}"></i>
-                    ${materialInfo.text} - ${material.id || material.numero}
-                    ${isVerified ? '<span class="status-badge status-ok"><i class="fas fa-check-circle"></i> Vérifié</span>' : ''}
-                </div>
-                <div class="compact-material-details">
-                    ${material.localisation || material.location || 'Non spécifié'}
-                    ${material.interventionType === 'installation' 
-                        ? '<span class="status-badge status-purple"><i class="fas fa-wrench"></i> Installation</span>' 
-                        : '<span class="status-badge status-info"><i class="fas fa-clipboard-check"></i> Vérification</span>'}
-                </div>
-            </div>
-            <div class="compact-material-actions">
-                <button class="btn btn-sm btn-danger" onclick="removeMaterial(${index})" 
-                        title="Supprimer">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        </div>
-    `;
-}
-
-function getMaterialInfo(type) {
-    const types = {
-        extincteur: { class: 'extincteur', icon: 'fa-fire-extinguisher', text: 'Extincteur' },
-        ria: { class: 'ria', icon: 'fa-faucet', text: 'RIA' },
-        baes: { class: 'baes', icon: 'fa-lightbulb', text: 'BAES' },
-        alarme: { class: 'alarme', icon: 'fa-bell', text: 'Alarme' }
-    };
-    
-    return types[type] || { class: '', icon: 'fa-question', text: 'Matériel' };
-}
-
-function removeMaterial(index) {
-    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
-        showError("Matériel non trouvé");
-        return;
-    }
-    
-    const material = AppState.currentClient.materials[index];
-    if (!confirm(`Voulez-vous vraiment supprimer ${material.id || material.numero} ?`)) {
-        return;
-    }
-    
-    AppState.currentClient.materials.splice(index, 1);
-    saveCurrentClientChanges();
-    displayMaterialsList();
-    
+    // Rafraîchir aussi la liste de vérification si on est sur cette page
     if (AppState.currentPage === 'verification') {
         displayVerificationList();
     }
-    
-    showSuccess("Matériel supprimé avec succès");
 }
 
-// ==================== VÉRIFICATION DES MATÉRIELS ====================
-function displayVerificationList() {
-    const verificationList = document.getElementById('verification-list');
-    const materialsCount = document.getElementById('materials-count');
-    const completeBtn = document.getElementById('complete-btn');
-    
-    if (!verificationList) return;
-    
-    updateClientInfoBadge();
-    
-    if (!AppState.currentClient || !AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
-        showEmptyState(verificationList, 'verification');
-        updateMaterialsCount(materialsCount, completeBtn, 0, 0, 0);
-        return;
-    }
-    
-    const filteredMaterials = filterMaterialsForVerification();
-    verificationList.innerHTML = createVerificationListHTML(filteredMaterials);
-    
-    const verifiedCount = filteredMaterials.filter(m => isVerifiedForCurrentYear(m)).length;
-    const toVerifyCount = filteredMaterials.length - verifiedCount;
-    
-    updateMaterialsCount(materialsCount, completeBtn, verifiedCount, toVerifyCount, filteredMaterials.length);
-}
-
-function filterMaterialsForVerification() {
-    const searchTerm = getElementValue('verification-search')?.toLowerCase() || '';
-    const materials = AppState.currentClient.materials;
-    
-    return materials.filter(material => {
-        if (!AppState.currentFamilyFilter.includes('all')) {
-            if (AppState.currentFamilyFilter.length === 0) return false;
-            if (!AppState.currentFamilyFilter.includes(material.type)) return false;
-        }
-        
-        const searchFields = [
-            material.id || material.numero || '',
-            material.localisation || material.location || '',
-            material.type || '',
-            material.typeExtincteur || ''
-        ];
-        
-        return searchFields.some(field => field.toLowerCase().includes(searchTerm));
-    }).sort(sortMaterialsByTypeAndId);
-}
-
-function sortMaterialsByTypeAndId(a, b) {
-    const typeOrder = { 'extincteur': 1, 'ria': 2, 'baes': 3, 'alarme': 4 };
-    const typeComparison = (typeOrder[a.type] || 4) - (typeOrder[b.type] || 4);
-    
-    if (typeComparison !== 0) {
-        return typeComparison;
-    }
-    
-    const aId = a.id || a.numero || '';
-    const bId = b.id || b.numero || '';
-    
-    const aNum = parseInt(aId.replace(/\D/g, '')) || 0;
-    const bNum = parseInt(bId.replace(/\D/g, '')) || 0;
-    
-    return aNum - bNum;
-}
-
-function createVerificationListHTML(materials) {
-    return `
-        <div class="family-filters">
-            ${createFamilyFilterHTML()}
-        </div>
-        ${materials.map((material, index) => createVerificationItemHTML(material, index)).join('')}
-    `;
-}
-
-function createFamilyFilterHTML() {
-    const filters = CONFIG.familyFilters;
-    
-    return `
-        <div class="family-filter-header">
-            <i class="fas fa-filter"></i> Filtrer par famille :
-        </div>
-        <div class="family-filter-buttons">
-            ${filters.map(family => createFamilyFilterButton(family)).join('')}
-        </div>
-        <div class="family-filter-stats">
-            ${createFamilyFilterStats()}
-        </div>
-    `;
-}
-
-function createFamilyFilterButton(family) {
-    const isActive = AppState.currentFamilyFilter.includes(family);
-    const icon = getFamilyIcon(family);
-    const text = getFamilyText(family);
-    
-    return `
-        <button class="family-filter-btn ${isActive ? 'active' : ''}" 
-                onclick="toggleFamilyFilter('${family}')"
-                aria-pressed="${isActive}">
-            <i class="fas ${icon}"></i> ${text}
-        </button>
-    `;
-}
-
-function getFamilyIcon(family) {
-    const icons = {
-        'all': 'fa-layer-group',
-        'extincteur': 'fa-fire-extinguisher',
-        'ria': 'fa-faucet',
-        'baes': 'fa-lightbulb',
-        'alarme': 'fa-bell'
-    };
-    return icons[family] || 'fa-question';
-}
-
-function getFamilyText(family) {
-    const texts = {
-        'all': 'Tous',
-        'extincteur': 'Extincteurs',
-        'ria': 'RIA',
-        'baes': 'BAES',
-        'alarme': 'Alarmes'
-    };
-    return texts[family] || family;
-}
-
-function createFamilyFilterStats() {
-    if (!AppState.currentClient || !AppState.currentClient.materials) return '';
-    
-    const materials = AppState.currentClient.materials;
-    const filteredCount = filterMaterialsForVerification().length;
-    
-    let stats = `
-        <span class="filter-stat">
-            <i class="fas fa-list"></i> ${filteredCount} matériel(s) filtré(s)
-        </span>
-    `;
-    
-    CONFIG.familyFilters.slice(1).forEach(family => {
-        const count = materials.filter(m => m.type === family).length;
-        if (count > 0) {
-            stats += `
-                <span class="filter-stat">
-                    <i class="fas ${getFamilyIcon(family)}"></i> ${count} ${getFamilyText(family).toLowerCase()}
-                </span>
-            `;
-        }
-    });
-    
-    if (AppState.currentFamilyFilter.length > 0 && !AppState.currentFamilyFilter.includes('all')) {
-        const activeFilters = AppState.currentFamilyFilter.map(f => getFamilyText(f)).join(', ');
-        stats += `
-            <span class="filter-stat filter-active">
-                <i class="fas fa-filter"></i> Filtre actif: ${activeFilters}
-            </span>
-        `;
-    }
-    
-    return stats;
-}
-
-function createVerificationItemHTML(material, originalIndex) {
-    const materialInfo = getMaterialInfo(material.type);
-    const isVerified = isVerifiedForCurrentYear(material);
-    const etatConformite = getEtatConformite(material);
-    
-    let statusBadge = '';
-    let verificationYearInfo = '';
-    
-    if (isVerified) {
-        statusBadge = `<span class="status-badge status-ok">
-            <i class="fas fa-check-circle"></i> Vérifié ${new Date().getFullYear()}
-        </span>`;
-    } else if (material.dateVerification) {
-        const previousYear = new Date(material.dateVerification).getFullYear();
-        statusBadge = `<span class="status-badge status-warning">
-            <i class="fas fa-history"></i> À re-vérifier (dernière vérif: ${previousYear})
-        </span>`;
-        verificationYearInfo = `<small class="verification-info">
-            <i class="fas fa-info-circle"></i> Dernière vérification: ${formatDate(material.dateVerification)}
-        </small>`;
-    } else {
-        statusBadge = `<span class="status-badge status-warning">
-            <i class="fas fa-clock"></i> Jamais vérifié
-        </span>`;
-    }
-    
-    return `
-        <div class="compact-material-item ${materialInfo.class}" id="verif-material-${originalIndex}">
-            <div class="compact-material-info">
-                <div class="compact-material-name">
-                    <i class="fas ${materialInfo.icon}"></i>
-                    ${materialInfo.text} - ${material.id || material.numero}
-                    ${statusBadge}
-                    <span class="status-badge ${etatConformite === 'Conforme' ? 'status-ok' : 'status-danger'}">
-                        <i class="fas ${etatConformite === 'Conforme' ? 'fa-check' : 'fa-times'}"></i> ${etatConformite}
-                    </span>
-                </div>
-                <div class="compact-material-details">
-                    ${material.localisation || material.location || 'Non spécifié'}
-                    ${material.interventionType === 'installation' 
-                        ? '<span class="status-badge status-purple"><i class="fas fa-wrench"></i> Installation</span>' 
-                        : '<span class="status-badge status-info"><i class="fas fa-clipboard-check"></i> Vérification</span>'}
-                    ${verificationYearInfo}
-                </div>
-            </div>
-            <div class="compact-material-actions">
-                <button class="btn btn-sm" onclick="editMaterialForVerification(${originalIndex})" 
-                        title="Modifier">
-                    <i class="fas fa-edit"></i>
-                </button>
-                ${!isVerified 
-                    ? `<button class="btn btn-sm btn-success" onclick="verifyMaterial(${originalIndex})" 
-                           title="Valider la vérification">
-                        <i class="fas fa-check"></i>
-                       </button>`
-                    : `<button class="btn btn-sm btn-danger" onclick="unverifyMaterial(${originalIndex})" 
-                           title="Marquer à vérifier">
-                        <i class="fas fa-redo"></i>
-                       </button>`
-                }
-                <button class="btn btn-sm btn-danger" onclick="removeMaterialFromVerification(${originalIndex})" 
-                        title="Supprimer">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        </div>
-    `;
-}
-
-function getEtatConformite(material) {
-    switch(material.type) {
-        case 'extincteur':
-            return isExtincteurConforme(material) ? 'Conforme' : 'Non conforme';
-        case 'ria':
-            return isRIAConforme(material) ? 'Conforme' : 'Non conforme';
-        case 'baes':
-            return isBAESConforme(material) ? 'Conforme' : 'Non conforme';
-        case 'alarme':
-            return isAlarmeConforme(material) ? 'Conforme' : 'Non conforme';
-        default:
-            return 'Non vérifié';
-    }
-}
-
-function isVerifiedForCurrentYear(material) {
-    if (!material.verified || !material.dateVerification) return false;
-    
-    const verificationYear = new Date(material.dateVerification).getFullYear();
-    const currentYear = new Date().getFullYear();
-    
-    return verificationYear === currentYear;
-}
-
-function updateMaterialsCount(materialsCountElement, completeButton, verifiedCount, toVerifyCount, totalFiltered) {
-    if (materialsCountElement) {
-        const totalMaterials = AppState.currentClient ? AppState.currentClient.materials.length : 0;
-        materialsCountElement.innerHTML = `<i class="fas fa-list"></i> ${totalMaterials} matériel(s)`;
-    }
-    
-    if (completeButton) {
-        if (toVerifyCount === 0 && verifiedCount > 0) {
-            completeButton.disabled = false;
-            completeButton.innerHTML = `<i class="fas fa-check-double"></i> Terminer la vérification (${verifiedCount} vérifié(s))`;
-        } else if (toVerifyCount > 0) {
-            completeButton.disabled = true;
-            completeButton.innerHTML = `<i class="fas fa-check-double"></i> Vérifiez tous les matériels d'abord (${toVerifyCount} restant(s))`;
-        } else {
-            completeButton.disabled = true;
-            completeButton.innerHTML = `<i class="fas fa-check-double"></i> Aucun matériel à vérifier`;
-        }
-    }
-}
-
-function toggleFamilyFilter(family) {
-    if (family === 'all') {
-        AppState.currentFamilyFilter = ['all'];
-    } else {
-        AppState.currentFamilyFilter = AppState.currentFamilyFilter.filter(f => f !== 'all');
-        
-        const index = AppState.currentFamilyFilter.indexOf(family);
-        if (index === -1) {
-            AppState.currentFamilyFilter.push(family);
-        } else {
-            AppState.currentFamilyFilter.splice(index, 1);
-        }
-        
-        if (AppState.currentFamilyFilter.length === 0) {
-            AppState.currentFamilyFilter = ['all'];
-        }
-    }
-    
-    displayVerificationList();
-}
-
-function verifyAllInFamily(family) {
-    if (!AppState.currentClient || !AppState.currentClient.materials) {
-        showError('Aucun matériel à vérifier');
-        return;
-    }
-    
-    const familyMaterials = AppState.currentFamilyFilter.includes('all') 
-        ? AppState.currentClient.materials 
-        : AppState.currentClient.materials.filter(m => AppState.currentFamilyFilter.includes(m.type));
-    
-    const currentYear = new Date().getFullYear();
-    const notVerifiedMaterials = familyMaterials.filter(m => !isVerifiedForCurrentYear(m));
-    
-    if (notVerifiedMaterials.length === 0) {
-        const filterNames = getActiveFilterNames();
-        showSuccess(`Tous les ${filterNames} sont déjà vérifiés pour cette année !`);
-        return;
-    }
-    
-    const filterNames = getActiveFilterNames();
-    if (!confirm(`Voulez-vous valider ${filterNames} (${notVerifiedMaterials.length}) pour l'année ${currentYear} ?`)) {
-        return;
-    }
-    
-    const technicianName = getElementValue('technician-name') || 'Technicien';
-    const today = new Date().toISOString().split('T')[0];
-    
-    notVerifiedMaterials.forEach(material => {
-        material.verified = true;
-        material.dateVerification = today;
-        material.verifiedBy = technicianName;
-    });
-    
-    saveCurrentClientChanges();
-    displayVerificationList();
-    showSuccess(`${notVerifiedMaterials.length} matériel(s) validés pour l'année ${currentYear} !`);
-}
-
-function getActiveFilterNames() {
-    if (AppState.currentFamilyFilter.includes('all')) {
-        return 'tous les matériels';
-    }
-    
-    return AppState.currentFamilyFilter.map(f => {
-        const names = {
-            'extincteur': 'extincteurs',
-            'ria': 'RIA',
-            'baes': 'BAES',
-            'alarme': 'alarmes'
-        };
-        return names[f] || f;
-    }).join(', ');
-}
-
-function verifyMaterial(index) {
-    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
-        showError("Matériel non trouvé");
-        return;
-    }
-    
-    const currentYear = new Date().getFullYear();
-    if (!confirm(`Voulez-vous vraiment valider la vérification de ce matériel pour l'année ${currentYear} ?`)) {
-        return;
-    }
-    
-    AppState.currentClient.materials[index].verified = true;
-    AppState.currentClient.materials[index].dateVerification = new Date().toISOString().split('T')[0];
-    AppState.currentClient.materials[index].verifiedBy = getElementValue('technician-name') || 'Technicien';
-    
-    saveCurrentClientChanges();
-    displayVerificationList();
-    showSuccess(`Matériel validé pour l'année ${currentYear}`);
-}
-
-function unverifyMaterial(index) {
-    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
-        showError("Matériel non trouvé");
-        return;
-    }
-    
-    if (!confirm("Voulez-vous re-marquer ce matériel comme 'à vérifier' ?")) {
-        return;
-    }
-    
-    AppState.currentClient.materials[index].verified = false;
-    AppState.currentClient.materials[index].dateVerification = null;
-    AppState.currentClient.materials[index].verifiedBy = '';
-    
-    saveCurrentClientChanges();
-    displayVerificationList();
-    showSuccess("Matériel marqué comme 'à vérifier'");
-}
-
-function removeMaterialFromVerification(index) {
+// ==================== ÉDITION DES MATÉRIELS ====================
+function editMaterial(index) {
     if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
         showError("Matériel non trouvé");
         return;
     }
     
     const material = AppState.currentClient.materials[index];
-    if (!confirm(`Voulez-vous vraiment supprimer ${material.id || material.numero} de la liste ?`)) {
-        return;
-    }
+    AppState.currentEditingMaterialIndex = index;
     
-    AppState.currentClient.materials.splice(index, 1);
-    saveCurrentClientChanges();
-    displayMaterialsList();
-    displayVerificationList();
-    showSuccess("Matériel supprimé de la liste");
+    switch(material.type) {
+        case 'extincteur':
+            editExtincteur(material);
+            break;
+        case 'ria':
+            editRIA(material);
+            break;
+        case 'baes':
+            editBAES(material);
+            break;
+        case 'alarme':
+            editAlarme(material);
+            break;
+        default:
+            showError('Type de matériel non reconnu');
+    }
 }
 
-function completeVerification() {
-    if (!AppState.currentClient || !AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
-        showError("Aucun matériel à vérifier");
-        return;
-    }
-    
-    const materialsToCheck = AppState.currentFamilyFilter.includes('all') 
-        ? AppState.currentClient.materials 
-        : AppState.currentClient.materials.filter(m => AppState.currentFamilyFilter.includes(m.type));
-    
-    const verifiedMaterials = materialsToCheck.filter(m => m.verified && isVerifiedForCurrentYear(m));
-    
-    if (verifiedMaterials.length === 0) {
-        showError("Aucun matériel n'a été validé !");
-        return;
-    }
-    
-    const filterNames = getActiveFilterNames();
-    showSuccess(`Vérification terminée pour ${filterNames} ! ${verifiedMaterials.length} matériel(s) vérifié(s) pour ${new Date().getFullYear()}.`);
-    
-    AppState.currentFamilyFilter = ['all'];
-    navigateTo('signature');
-}
-
-function resetVerificationsForNewYear() {
-    if (!AppState.currentClient || !AppState.currentClient.materials) return;
-    
-    const currentYear = new Date().getFullYear();
-    
-    AppState.currentClient.materials.forEach(material => {
-        if (material.dateVerification) {
-            const verificationYear = new Date(material.dateVerification).getFullYear();
-            if (verificationYear < currentYear) {
-                material.verified = false;
-                material.verifiedBy = '';
-            }
-        }
+function editExtincteur(material) {
+    setFormValues({
+        'extincteur-id': material.id,
+        'extincteur-location': material.localisation,
+        'extincteur-type': material.typeExtincteur,
+        'extincteur-fabricant': material.fabricant,
+        'extincteur-modele': material.modele,
+        'extincteur-annee': material.annee,
+        'extincteur-capacite': material.capacite,
+        'extincteur-date-controle': material.dateControle,
+        'extincteur-prochain-controle': material.prochainControle,
+        'extincteur-etat-general': material.etatGeneral,
+        'extincteur-etat-general-comment': material.etatGeneralComment,
+        'extincteur-lisibilite': material.lisibilite,
+        'extincteur-panneau': material.panneau,
+        'extincteur-goupille': material.goupille,
+        'extincteur-pression': material.pression,
+        'extincteur-pesee': material.pesee,
+        'extincteur-joints': material.joints,
+        'extincteur-accessibilite': material.accessibilite,
+        'extincteur-observations': material.observations,
+        'extincteur-scelle': material.scelle,
+        'extincteur-remplacement-joint': material.remplacementJoint,
+        'extincteur-intervention-type': material.interventionType
     });
     
+    if (material.interventions) {
+        setCheckboxValue('extincteur-maa', material.interventions.maa);
+        setCheckboxValue('extincteur-eiee', material.interventions.eiee);
+        setCheckboxValue('extincteur-recharge', material.interventions.recharge);
+    }
+    
+    updateModalButton('add-extincteur-modal', 'Mettre à jour', updateExtincteur);
+    showModal('add-extincteur-modal');
+}
+
+function updateExtincteur() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedExtincteur = createExtincteurObject();
+    
+    // Conserver l'historique de vérification
+    const originalMaterial = AppState.currentClient.materials[AppState.currentEditingMaterialIndex];
+    if (originalMaterial.verificationHistory) {
+        updatedExtincteur.verificationHistory = originalMaterial.verificationHistory;
+    }
+    
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedExtincteur;
+    
     saveCurrentClientChanges();
+    closeModal('add-extincteur-modal');
+    refreshAllLists();
+    
+    showSuccess('Extincteur mis à jour avec succès');
+}
+
+function editRIA(material) {
+    setFormValues({
+        'ria-id': material.id,
+        'ria-location': material.localisation,
+        'ria-type': material.typeRIA,
+        'ria-diametre': material.diametre,
+        'ria-longueur': material.longueur,
+        'ria-pression': material.pression,
+        'ria-date-controle': material.dateControle,
+        'ria-prochainControle': material.prochainControle,
+        'ria-etat-general': material.etatGeneral,
+        'ria-etat-general-comment': material.etatGeneralComment,
+        'ria-lisibilite': material.lisibilite,
+        'ria-panneau': material.panneau,
+        'ria-accessibilite': material.accessibilite,
+        'ria-observations': material.observations,
+        'ria-intervention-type': material.interventionType
+    });
+    
+    updateModalButton('add-ria-modal', 'Mettre à jour', updateRIA);
+    showModal('add-ria-modal');
+}
+
+function updateRIA() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedRIA = createRIAObject();
+    
+    // Conserver l'historique de vérification
+    const originalMaterial = AppState.currentClient.materials[AppState.currentEditingMaterialIndex];
+    if (originalMaterial.verificationHistory) {
+        updatedRIA.verificationHistory = originalMaterial.verificationHistory;
+    }
+    
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedRIA;
+    
+    saveCurrentClientChanges();
+    closeModal('add-ria-modal');
+    refreshAllLists();
+    
+    showSuccess('RIA mis à jour avec succès');
+}
+
+function editBAES(material) {
+    setFormValues({
+        'baes-id': material.id,
+        'baes-location': material.localisation,
+        'baes-type': material.typeBAES,
+        'baes-puissance': material.puissance,
+        'baes-autonomie': material.autonomie,
+        'baes-date-controle': material.dateControle,
+        'baes-prochainControle': material.prochainControle,
+        'baes-etat-general': material.etatGeneral,
+        'baes-etat-general-comment': material.etatGeneralComment,
+        'baes-fonctionnement': material.fonctionnement,
+        'baes-chargeur': material.chargeur,
+        'baes-accessibilite': material.accessibilite,
+        'baes-observations': material.observations,
+        'baes-intervention-type': material.interventionType
+    });
+    
+    updateModalButton('add-baes-modal', 'Mettre à jour', updateBAES);
+    showModal('add-baes-modal');
+}
+
+function updateBAES() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedBAES = createBAESObject();
+    
+    // Conserver l'historique de vérification
+    const originalMaterial = AppState.currentClient.materials[AppState.currentEditingMaterialIndex];
+    if (originalMaterial.verificationHistory) {
+        updatedBAES.verificationHistory = originalMaterial.verificationHistory;
+    }
+    
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedBAES;
+    
+    saveCurrentClientChanges();
+    closeModal('add-baes-modal');
+    refreshAllLists();
+    
+    showSuccess('BAES mis à jour avec succès');
+}
+
+function editAlarme(material) {
+    setFormValues({
+        'alarme-id': material.id,
+        'alarme-location': material.localisation,
+        'alarme-type': material.typeAlarme,
+        'alarme-date-verif': material.dateVerif,
+        'alarme-date-prochaine': material.dateProchaine,
+        'alarme-annee': material.annee,
+        'registre-securite': material.registreSecurite
+    });
+    
+    setCheckboxValue('alarme-batterie', material.batterie);
+    setCheckboxValue('alarme-fonctionnement', material.fonctionnement);
+    setCheckboxValue('alarme-accessibilite', material.accessibilite);
+    
+    AppState.currentAlarmePhotos = material.photos || [];
+    displayAlarmePhotos();
+    
+    updateModalButton('add-alarme-modal', 'Mettre à jour', updateAlarme);
+    showModal('add-alarme-modal');
+}
+
+function updateAlarme() {
+    if (AppState.currentEditingMaterialIndex === -1) return;
+    
+    const updatedAlarme = createAlarmeObject();
+    
+    // Conserver l'historique de vérification
+    const originalMaterial = AppState.currentClient.materials[AppState.currentEditingMaterialIndex];
+    if (originalMaterial.verificationHistory) {
+        updatedAlarme.verificationHistory = originalMaterial.verificationHistory;
+    }
+    updatedAlarme.photos = originalMaterial.photos || [];
+    
+    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedAlarme;
+    
+    saveCurrentClientChanges();
+    closeModal('add-alarme-modal');
+    refreshAllLists();
+    
+    showSuccess('Alarme mise à jour avec succès');
 }
 
 // ==================== SIGNATURES ====================
@@ -2376,6 +3154,10 @@ function displayEventsForDay(day, month, year) {
     
     if (buttonContainer) {
         buttonContainer.style.display = 'block';
+        const verifBtn = buttonContainer.querySelector('#planning-verif-btn');
+        if (verifBtn) {
+            verifBtn.onclick = goToVerificationFromPlanning;
+        }
     }
 }
 
@@ -2398,7 +3180,7 @@ function createCalendarEventHTML(event) {
                     </div>
                 </div>
                 <div class="compact-material-actions">
-                    <button class="btn btn-sm" onclick="editIntervention('${event.id}')" 
+                    <button class="btn btn-sm btn-primary" onclick="editIntervention('${event.id}')" 
                             title="Modifier">
                         <i class="fas fa-edit"></i>
                     </button>
@@ -2729,8 +3511,10 @@ function loadHistory() {
 
 function getVerifiedClients(searchTerm) {
     return AppState.clients.filter(client => {
-        const hasVerifications = client.verificationCompleted || 
-                                (client.materials && client.materials.some(m => m.verified));
+        const hasVerifications = client.lastVerificationYear || 
+                                (client.materials && client.materials.some(m => 
+                                    m.verificationHistory && m.verificationHistory.some(v => v.verified)
+                                ));
         
         if (!hasVerifications) return false;
         
@@ -2745,8 +3529,25 @@ function getVerifiedClients(searchTerm) {
 }
 
 function createHistoryItemHTML(client) {
-    const verifiedMaterials = client.materials?.filter(m => m.verified) || [];
-    const lastVerification = getLastVerificationDate(client);
+    const materialsCount = client.materials?.length || 0;
+    let verifiedMaterialsCount = 0;
+    let lastVerificationYear = client.lastVerificationYear;
+    
+    if (client.materials) {
+        client.materials.forEach(material => {
+            if (material.verificationHistory && material.verificationHistory.some(v => v.verified)) {
+                verifiedMaterialsCount++;
+                
+                material.verificationHistory.forEach(verification => {
+                    if (verification.verified && verification.verificationYear) {
+                        if (!lastVerificationYear || verification.verificationYear > lastVerificationYear) {
+                            lastVerificationYear = verification.verificationYear;
+                        }
+                    }
+                });
+            }
+        });
+    }
     
     return `
         <div class="compact-material-item client-item">
@@ -2755,13 +3556,13 @@ function createHistoryItemHTML(client) {
                     <i class="fas fa-user"></i>
                     ${escapeHtml(client.name)}
                     <span class="status-badge status-ok">
-                        ${verifiedMaterials.length} matériel(s) vérifié(s)
+                        ${verifiedMaterialsCount} matériel(s) vérifié(s)
                     </span>
                 </div>
                 <div class="compact-material-details">
                     ${escapeHtml(client.contact)} • ${escapeHtml(client.address)}
                     <br>
-                    <small>Dernière vérification : ${lastVerification ? formatDate(lastVerification) : 'Non spécifiée'}</small>
+                    <small>Dernière vérification : ${lastVerificationYear ? `Année ${lastVerificationYear}` : 'Non spécifiée'}</small>
                 </div>
             </div>
             <div class="compact-material-actions">
@@ -2772,21 +3573,6 @@ function createHistoryItemHTML(client) {
             </div>
         </div>
     `;
-}
-
-function getLastVerificationDate(client) {
-    if (client.lastVerificationDate) {
-        return client.lastVerificationDate;
-    }
-    
-    if (client.materials) {
-        const verifiedMaterials = client.materials.filter(m => m.verified && m.dateVerification);
-        if (verifiedMaterials.length > 0) {
-            return verifiedMaterials[0].dateVerification;
-        }
-    }
-    
-    return null;
 }
 
 function searchHistory() {
@@ -2830,30 +3616,69 @@ function formatTime(date) {
     });
 }
 
+function showToast(message, type = 'success', duration = 3000) {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <i class="fas fa-${type === 'success' ? 'check-circle' : 
+                         type === 'error' ? 'exclamation-circle' : 
+                         'info-circle'}"></i>
+        <span>${message}</span>
+    `;
+    
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        border-radius: 8px;
+        color: white;
+        z-index: 10000;
+        transform: translateY(100px);
+        opacity: 0;
+        transition: all 0.3s ease;
+        max-width: 300px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 500;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    `;
+    
+    if (type === 'success') {
+        toast.style.background = 'linear-gradient(135deg, #28a745 0%, #218838 100%)';
+    } else if (type === 'error') {
+        toast.style.background = 'linear-gradient(135deg, #dc3545 0%, #c82333 100%)';
+    } else {
+        toast.style.background = 'linear-gradient(135deg, #17a2b8 0%, #138496 100%)';
+    }
+    
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.transform = 'translateY(0)';
+        toast.style.opacity = '1';
+    }, 10);
+    
+    setTimeout(() => {
+        toast.style.transform = 'translateY(100px)';
+        toast.style.opacity = '0';
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.remove();
+            }
+        }, 300);
+    }, duration);
+    
+    return toast;
+}
+
 function showSuccess(message) {
-    const modal = document.getElementById('success-modal');
-    const messageElement = document.getElementById('modal-message');
-    
-    if (messageElement) {
-        messageElement.textContent = message;
-    }
-    
-    if (modal) {
-        modal.classList.add('active');
-    }
+    showToast(message, 'success');
 }
 
 function showError(message) {
-    const modal = document.getElementById('error-modal');
-    const messageElement = document.getElementById('error-message');
-    
-    if (messageElement) {
-        messageElement.textContent = message;
-    }
-    
-    if (modal) {
-        modal.classList.add('active');
-    }
+    showToast(message, 'error');
 }
 
 function closeSuccessModal() {
@@ -3428,9 +4253,38 @@ function addDataManagementCSS() {
             color: #dc3545;
         }
         
+        .material-family-badge {
+            background: #e9ecef;
+            color: #495057;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            margin-left: 8px;
+        }
+        
+        .verification-actions {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .verification-date {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        
+        .btn-success.verified {
+            background-color: #28a745;
+            border-color: #28a745;
+        }
+        
         @media (max-width: 768px) {
             .data-management-options {
                 grid-template-columns: 1fr;
+            }
+            
+            .verification-actions {
+                flex-direction: column;
             }
         }
     `;
@@ -3514,102 +4368,6 @@ function ensureJSPDF() {
     });
 }
 
-// ==================== FONCTIONS DE VÉRIFICATION DE CONFORMITÉ ====================
-function isExtincteurConforme(material) {
-    // Vérifier l'âge
-    if (material.annee) {
-        const currentYear = new Date().getFullYear();
-        const age = currentYear - parseInt(material.annee);
-        if (age >= 10) {
-            return false;
-        }
-    }
-    
-    // Vérifier les observations pour "non conforme"
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    // Vérifier les champs OK/NOK
-    const champsVerification = [
-        'etatGeneral',
-        'lisibilite',
-        'panneau',
-        'goupille',
-        'pression',
-        'joints',
-        'accessibilite'
-    ];
-    
-    for (const champ of champsVerification) {
-        if (material[champ] === 'Non OK') {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-function isRIAConforme(material) {
-    // Vérifier les observations pour "non conforme"
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    // Vérifier les champs OK/NOK
-    const champsVerification = [
-        'etatGeneral',
-        'lisibilite',
-        'panneau',
-        'accessibilite'
-    ];
-    
-    for (const champ of champsVerification) {
-        if (material[champ] === 'Non OK') {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-function isBAESConforme(material) {
-    // Vérifier les observations pour "non conforme"
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    // Vérifier les champs OK/NOK
-    const champsVerification = [
-        'etatGeneral',
-        'fonctionnement',
-        'chargeur',
-        'accessibilite'
-    ];
-    
-    for (const champ of champsVerification) {
-        if (material[champ] === 'Non OK') {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-function isAlarmeConforme(material) {
-    // Vérifier les observations pour "non conforme"
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    // Vérifier les champs de vérification
-    if (!material.batterie || !material.fonctionnement || !material.accessibilite) {
-        return false;
-    }
-    
-    return true;
-}
-
 // ==================== GÉNÉRATION RAPPORT PDF OPTIMISÉ ====================
 async function generatePDFReport() {
     console.log('🔄 Début génération rapport PDF optimisé...');
@@ -3619,10 +4377,17 @@ async function generatePDFReport() {
         return;
     }
     
-    const materials = AppState.currentClient.materials?.filter(m => m.verified) || [];
+    const currentYear = new Date().getFullYear();
+    
+    // Utiliser les matériels vérifiés stockés ou filtrer à nouveau
+    const materials = AppState.verifiedMaterialsForReport || 
+        AppState.currentClient.materials?.filter(m => 
+            m.verificationHistory && 
+            m.verificationHistory.some(v => v.verificationYear === currentYear && v.verified)
+        ) || [];
     
     if (materials.length === 0) {
-        showError('Aucun matériel vérifié à exporter');
+        showError('Aucun matériel vérifié pour l\'année en cours à exporter');
         return;
     }
     
@@ -3638,14 +4403,12 @@ async function generatePDFReport() {
             format: 'a4'
         });
         
-        // ============== CONFIGURATIONS ==============
         const margin = 15;
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
         const contentWidth = pageWidth - (2 * margin);
         let currentY = margin;
         
-        // ============== FONCTIONS UTILITAIRES ==============
         const addText = (text, x, y, fontSize = 10, style = 'normal', align = 'left', color = [0, 0, 0]) => {
             doc.setFontSize(fontSize);
             doc.setFont('helvetica', style);
@@ -3668,23 +4431,20 @@ async function generatePDFReport() {
             doc.rect(x, y, width, height, 'S');
         };
         
-        // ============== EN-TÊTE ==============
         addText('RAPPORT DE VÉRIFICATION ANNUEL', margin, currentY, 20, 'bold', 'left', [26, 54, 93]);
         currentY += 10;
         
-        addText('Vérification des équipements de sécurité incendie', margin, currentY, 14, 'normal', 'left', [44, 62, 80]);
+        addText(`Vérification des équipements de sécurité incendie - Année ${currentYear}`, margin, currentY, 14, 'normal', 'left', [44, 62, 80]);
         currentY += 8;
         
-        // Date et référence
         const today = new Date().toLocaleDateString('fr-FR');
         addText(`Date: ${today}`, margin, currentY, 10);
-        addText(`Référence: RAP-${new Date().getFullYear()}-${AppState.currentClient.id?.substr(0, 8) || '000000'}`, pageWidth - margin, currentY, 10, 'normal', 'right');
+        addText(`Référence: RAP-${currentYear}-${AppState.currentClient.id?.substr(0, 8) || '000000'}`, pageWidth - margin, currentY, 10, 'normal', 'right');
         currentY += 10;
         
         addLine(currentY);
         currentY += 5;
         
-        // ============== INFORMATIONS CLIENT ==============
         addText('INFORMATIONS CLIENT', margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
         currentY += 8;
         
@@ -3700,7 +4460,6 @@ async function generatePDFReport() {
         addText(`Technicien: ${escapeHtml(technician)}`, margin, currentY, 10);
         currentY += 5;
         
-        // Registre de sécurité
         const registreSecurite = getElementValue('registre-securite');
         if (registreSecurite) {
             const statutRegistre = registreSecurite === 'oui' ? 'Signé et conforme' : 
@@ -3711,34 +4470,20 @@ async function generatePDFReport() {
         
         currentY += 10;
         
-        // ============== ÉTAT GLOBAL DE CONFORMITÉ ==============
-        // Calculer les statistiques
         const materialsByType = groupMaterialsByType(materials);
         let totalConforme = 0;
         let totalNonConforme = 0;
-        const nonConformesParType = {};
         
         Object.entries(materialsByType).forEach(([type, items]) => {
-            const conformeCount = items.filter(m => {
-                switch(type) {
-                    case 'extincteur': return isExtincteurConforme(m);
-                    case 'ria': return isRIAConforme(m);
-                    case 'baes': return isBAESConforme(m);
-                    case 'alarme': return isAlarmeConforme(m);
-                    default: return true;
-                }
-            }).length;
+            const conformeCount = items.filter(m => 
+                checkMaterialConformity(m, currentYear)
+            ).length;
             const nonConformeCount = items.length - conformeCount;
             
             totalConforme += conformeCount;
             totalNonConforme += nonConformeCount;
-            
-            if (nonConformeCount > 0) {
-                nonConformesParType[type] = nonConformeCount;
-            }
         });
         
-        // Affichage sobre de l'état de conformité
         const isGlobalConforme = totalNonConforme === 0;
         const conformiteText = isGlobalConforme ? 'ÉTAT CONFORME' : 'ÉTAT NON CONFORME';
         const conformiteColor = isGlobalConforme ? [50, 168, 82] : [220, 53, 69];
@@ -3747,36 +4492,30 @@ async function generatePDFReport() {
         currentY += 8;
         
         const sousTitre = isGlobalConforme 
-            ? `Tous les ${materials.length} matériels vérifiés sont conformes`
-            : `${totalNonConforme} matériel(s) non conforme(s) sur ${materials.length}`;
+            ? `Tous les matériels vérifiés (${materials.length}) sont conformes aux normes NF S 61-919`
+            : `${totalNonConforme} matériel(s) non conforme(s) sur ${materials.length} vérifié(s)`;
         addText(sousTitre, pageWidth / 2, currentY, 12, 'normal', 'center', [73, 80, 87]);
         
         currentY += 15;
         
-        // ============== RÉSUMÉ STATISTIQUES ==============
         addText('SYNTHÈSE DES VÉRIFICATIONS', margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
         currentY += 8;
         
-        // Tableau de statistiques simple
         const statX = margin;
         const statWidth = contentWidth / 4;
         
-        // Total matériels
         addBox(statX, currentY, statWidth, 20, [248, 249, 250]);
-        addText('TOTAL', statX + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
+        addText('VÉRIFIÉS', statX + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
         addText(materials.length.toString(), statX + statWidth/2, currentY + 15, 16, 'bold', 'center', [26, 54, 93]);
         
-        // Conformes
         addBox(statX + statWidth, currentY, statWidth, 20, [232, 245, 233]);
         addText('CONFORMES', statX + statWidth + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
         addText(totalConforme.toString(), statX + statWidth + statWidth/2, currentY + 15, 16, 'bold', 'center', [50, 168, 82]);
         
-        // Non conformes
         addBox(statX + statWidth*2, currentY, statWidth, 20, [248, 215, 218]);
         addText('NON CONFORMES', statX + statWidth*2 + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
         addText(totalNonConforme.toString(), statX + statWidth*2 + statWidth/2, currentY + 15, 16, 'bold', 'center', [220, 53, 69]);
         
-        // Taux de conformité
         const taux = materials.length > 0 ? Math.round((totalConforme / materials.length) * 100) : 0;
         addBox(statX + statWidth*3, currentY, statWidth, 20, [220, 237, 253]);
         addText('TAUX', statX + statWidth*3 + statWidth/2, currentY + 8, 10, 'bold', 'center', [73, 80, 87]);
@@ -3784,35 +4523,23 @@ async function generatePDFReport() {
         
         currentY += 25;
         
-        // ============== DÉTAIL PAR TYPE ==============
         currentY += 5;
         
         Object.entries(materialsByType).forEach(([type, items]) => {
             if (items.length === 0) return;
             
-            // Nouvelle page si nécessaire
             if (currentY > pageHeight - 60) {
                 doc.addPage();
                 currentY = margin;
             }
             
             const materialInfo = getMaterialInfo(type);
-            const conformeCount = items.filter(m => {
-                switch(type) {
-                    case 'extincteur': return isExtincteurConforme(m);
-                    case 'ria': return isRIAConforme(m);
-                    case 'baes': return isBAESConforme(m);
-                    case 'alarme': return isAlarmeConforme(m);
-                    default: return true;
-                }
-            }).length;
+            const conformeCount = items.filter(m => checkMaterialConformity(m, currentYear)).length;
             const nonConformeCount = items.length - conformeCount;
             const isTypeConforme = nonConformeCount === 0;
             
-            // En-tête de type
             addText(`${materialInfo.text.toUpperCase()}`, margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
             
-            // Badge de conformité pour le type
             const typeConformiteColor = isTypeConforme ? [50, 168, 82] : [220, 53, 69];
             const typeConformiteText = isTypeConforme ? 'Conforme' : `${nonConformeCount} non conforme(s)`;
             
@@ -3822,11 +4549,9 @@ async function generatePDFReport() {
             addText(`${items.length} matériel(s) vérifié(s)`, margin, currentY, 10, 'normal', 'left', [108, 117, 125]);
             currentY += 5;
             
-            // Tableau détaillé
             const headers = ['ID', 'Localisation', 'Type/Modèle', 'Année', 'Date vérif.', 'État'];
             const colWidths = [20, 35, 30, 15, 20, 30];
             
-            // En-têtes du tableau
             doc.setFillColor(26, 54, 93);
             doc.setTextColor(255, 255, 255);
             doc.setFont('helvetica', 'bold');
@@ -3842,13 +4567,11 @@ async function generatePDFReport() {
             doc.setTextColor(0, 0, 0);
             doc.setFont('helvetica', 'normal');
             
-            // Données du tableau
             items.forEach((material, index) => {
                 if (currentY > pageHeight - 20) {
                     doc.addPage();
                     currentY = margin;
                     
-                    // Redessiner les en-têtes
                     doc.setFillColor(26, 54, 93);
                     doc.setTextColor(255, 255, 255);
                     doc.setFont('helvetica', 'bold');
@@ -3865,64 +4588,25 @@ async function generatePDFReport() {
                     doc.setFont('helvetica', 'normal');
                 }
                 
-                // Déterminer si conforme
-                let isConforme = true;
-                let conformiteText = 'CONFORME';
-                let conformiteColor = [50, 168, 82];
-                let raisonNonConforme = '';
+                const yearVerification = material.verificationHistory.find(v => v.verificationYear === currentYear);
+                const isConforme = checkMaterialConformity(material, currentYear);
+                const conformiteText = isConforme ? 'CONFORME' : 'NON CONFORME';
+                const conformiteColor = isConforme ? [50, 168, 82] : [220, 53, 69];
                 
-                switch(type) {
-                    case 'extincteur':
-                        isConforme = isExtincteurConforme(material);
-                        if (material.annee) {
-                            const age = new Date().getFullYear() - parseInt(material.annee);
-                            if (age >= 10) {
-                                isConforme = false;
-                                raisonNonConforme = 'Âge > 10 ans';
-                            }
-                        }
-                        break;
-                    case 'ria':
-                        isConforme = isRIAConforme(material);
-                        break;
-                    case 'baes':
-                        isConforme = isBAESConforme(material);
-                        break;
-                    case 'alarme':
-                        isConforme = isAlarmeConforme(material);
-                        break;
-                }
-                
-                if (!isConforme && conformiteText === 'CONFORME') {
-                    conformiteText = 'NON CONFORME';
-                    conformiteColor = [220, 53, 69];
-                }
-                
-                // Vérifier les observations
-                if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-                    isConforme = false;
-                    conformiteText = 'NON CONFORME';
-                    conformiteColor = [220, 53, 69];
-                    if (!raisonNonConforme) raisonNonConforme = 'Observations';
-                }
-                
-                // Ligne de données
                 const rowData = [
                     material.id || material.numero || 'N/A',
                     material.localisation || material.location || 'Non spécifié',
                     material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || '',
                     material.annee || '',
-                    formatDate(material.dateVerification),
+                    yearVerification ? formatDate(yearVerification.dateVerification) : '',
                     conformiteText
                 ];
                 
-                // Alterner les couleurs de fond
                 if (index % 2 === 0) {
                     doc.setFillColor(248, 249, 250);
                     doc.rect(margin, currentY, contentWidth, 7, 'F');
                 }
                 
-                // Écrire les données
                 xPos = margin;
                 rowData.forEach((data, i) => {
                     const textColor = i === 5 ? conformiteColor : [0, 0, 0];
@@ -3936,53 +4620,26 @@ async function generatePDFReport() {
             currentY += 10;
         });
         
-        // ============== OBSERVATIONS ET RECOMMANDATIONS ==============
         if (currentY > pageHeight - 100) {
             doc.addPage();
             currentY = margin;
         }
         
-        addText('OBSERVATIONS ET RECOMMANDATIONS', margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
+        addText('COMMENTAIRE FINAL', margin, currentY, 14, 'bold', 'left', [26, 54, 93]);
         currentY += 8;
         
-        if (totalNonConforme > 0) {
-            addText(`⚠️ ${totalNonConforme} matériel(s) nécessite(nt) une attention particulière.`, margin, currentY, 11, 'bold', 'left', [220, 53, 69]);
-            currentY += 6;
-            
-            // Lister les matériels non conformes
-            Object.entries(nonConformesParType).forEach(([type, count]) => {
-                const typeInfo = getMaterialInfo(type);
-                addText(`• ${count} ${typeInfo.text.toLowerCase()}(s)`, margin + 10, currentY, 10);
-                currentY += 5;
-            });
-            
-            currentY += 5;
-            addText('Recommandations:', margin, currentY, 11, 'bold', 'left', [26, 54, 93]);
-            currentY += 6;
-            addText('1. Procéder au remplacement ou à la réparation des matériels non conformes', margin + 10, currentY, 10);
-            currentY += 5;
-            addText('2. Vérifier l\'accessibilité et la signalisation des équipements', margin + 10, currentY, 10);
-            currentY += 5;
-            addText('3. Mettre à jour le registre de sécurité incendie', margin + 10, currentY, 10);
-            currentY += 5;
-        } else {
-            addText('✅ Tous les équipements vérifiés sont conformes aux normes en vigueur.', margin, currentY, 11, 'normal', 'left', [50, 168, 82]);
-            currentY += 6;
-            addText('Aucune intervention corrective n\'est nécessaire.', margin, currentY, 10);
-            currentY += 5;
-        }
+        const commentaireFinal = getElementValue('commentaire-final') || 
+                               'Vérification annuelle des équipements de sécurité incendie effectuée conformément aux normes NF S 61-919 en vigueur.';
         
-        currentY += 10;
+        addText(commentaireFinal, margin, currentY, 10, 'normal', 'left');
+        currentY += 15;
         
-        // ============== VALIDITÉ ET SIGNATURES ==============
-        // Nouvelle page pour les signatures
         doc.addPage();
         currentY = margin;
         
         addText('VALIDATION DU RAPPORT', margin, currentY, 16, 'bold', 'center', [26, 54, 93]);
         currentY += 20;
         
-        // Validité
         addText('VALIDITÉ DU RAPPORT', margin, currentY, 12, 'bold', 'left', [26, 54, 93]);
         currentY += 7;
         addText(`Ce rapport est valable 12 mois à compter de la date de vérification.`, margin, currentY, 10);
@@ -3990,37 +4647,47 @@ async function generatePDFReport() {
         addText(`Date de la prochaine vérification recommandée: ${getNextVerificationDate()}`, margin, currentY, 10);
         currentY += 15;
         
-        // Signature technicien
         addText('LE TECHNICIEN', margin, currentY, 12, 'bold', 'left', [26, 54, 93]);
         currentY += 7;
         addText(technician, margin, currentY, 10);
         currentY += 15;
         
-        // Ligne de signature
-        addLine(currentY, [0, 0, 0]);
-        addText('Signature et cachet', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
-        currentY += 20;
+        if (technicianSignaturePad && !technicianSignaturePad.isEmpty()) {
+            const signatureData = technicianSignaturePad.toDataURL('image/png');
+            const signatureWidth = 60;
+            const signatureHeight = 30;
+            doc.addImage(signatureData, 'PNG', margin, currentY, signatureWidth, signatureHeight);
+            currentY += signatureHeight + 5;
+        } else {
+            addLine(currentY, [0, 0, 0]);
+            addText('Signature et cachet', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
+            currentY += 20;
+        }
         
-        // Signature client
         addText('LE CLIENT', margin, currentY, 12, 'bold', 'left', [26, 54, 93]);
         currentY += 7;
         addText(client.name, margin, currentY, 10);
         currentY += 15;
         
-        // Ligne de signature
-        addLine(currentY, [0, 0, 0]);
-        addText('Signature', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
-        currentY += 20;
+        if (clientSignaturePad && !clientSignaturePad.isEmpty()) {
+            const signatureData = clientSignaturePad.toDataURL('image/png');
+            const signatureWidth = 60;
+            const signatureHeight = 30;
+            doc.addImage(signatureData, 'PNG', margin, currentY, signatureWidth, signatureHeight);
+            currentY += signatureHeight + 5;
+        } else {
+            addLine(currentY, [0, 0, 0]);
+            addText('Signature', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
+            currentY += 20;
+        }
         
-        // Note légale
         addText('NOTE LÉGALE', margin, currentY, 10, 'bold', 'left', [73, 80, 87]);
         currentY += 6;
-        addText('Ce document certifie la vérification des équipements conformément à la norme APSAD R4.', margin, currentY, 9, 'italic', 'left', [108, 117, 125]);
+        addText('Ce document certifie la vérification des équipements conformément à la norme NF S 61-919.', margin, currentY, 9, 'italic', 'left', [108, 117, 125]);
         currentY += 4;
         addText('Toute reproduction ou modification non autorisée est interdite.', margin, currentY, 9, 'italic', 'left', [108, 117, 125]);
         
-        // ============== SAUVEGARDE ==============
-        const filename = `Rapport_${client.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+        const filename = `Rapport_${client.name.replace(/[^a-z0-9]/gi, '_')}_${currentYear}.pdf`;
         doc.save(filename);
         
         closeLoading();
@@ -4273,8 +4940,7 @@ function createRIAObject() {
         observations: getElementValue('ria-observations'),
         interventionType: getElementValue('ria-intervention-type'),
         photos: [],
-        verified: false,
-        dateVerification: null
+        verificationHistory: []
     };
 }
 
@@ -4329,8 +4995,7 @@ function createBAESObject() {
         observations: getElementValue('baes-observations'),
         interventionType: getElementValue('baes-intervention-type'),
         photos: [],
-        verified: false,
-        dateVerification: null
+        verificationHistory: []
     };
 }
 
@@ -4380,8 +5045,7 @@ function createAlarmeObject() {
         accessibilite: getCheckboxValue('alarme-accessibilite'),
         registreSecurite: getElementValue('registre-securite'),
         photos: AppState.currentAlarmePhotos,
-        verified: false,
-        dateVerification: null
+        verificationHistory: []
     };
 }
 
@@ -4395,10 +5059,10 @@ function resetAlarmeForm() {
     setElementValue('alarme-date-verif', today);
     setElementValue('alarme-date-prochaine', nextYear);
     setElementValue('alarme-annee', new Date().getFullYear());
-    setCheckboxValue('alarme-batterie', false);
-    setCheckboxValue('alarme-fonctionnement', false);
-    setCheckboxValue('alarme-accessibilite', false);
-    setElementValue('registre-securite', '');
+    setCheckboxValue('alarme-batterie', true);
+    setCheckboxValue('alarme-fonctionnement', true);
+    setCheckboxValue('alarme-accessibilite', true);
+    setElementValue('registre-securite', 'oui');
     
     AppState.currentAlarmePhotos = [];
     clearPhotoGallery('alarme-photo-gallery');
@@ -4455,7 +5119,6 @@ function addPhotoToGallery(galleryId, photoData) {
     
     gallery.appendChild(photoItem);
     
-    // Stocker les photos d'alarme dans AppState
     if (galleryId === 'alarme-photo-gallery') {
         AppState.currentAlarmePhotos.push(photoData);
     }
@@ -4466,183 +5129,6 @@ function removePhoto(photoId) {
     if (photoElement) {
         photoElement.remove();
     }
-}
-
-// ==================== FONCTIONS MANQUANTES POUR VÉRIFICATION ====================
-function editMaterialForVerification(index) {
-    if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
-        showError("Matériel non trouvé");
-        return;
-    }
-    
-    const material = AppState.currentClient.materials[index];
-    AppState.currentEditingMaterialIndex = index;
-    
-    switch(material.type) {
-        case 'extincteur':
-            editExtincteur(material);
-            break;
-        case 'ria':
-            editRIA(material);
-            break;
-        case 'baes':
-            editBAES(material);
-            break;
-        case 'alarme':
-            editAlarme(material);
-            break;
-    }
-}
-
-function editExtincteur(material) {
-    setFormValues({
-        'extincteur-id': material.id,
-        'extincteur-location': material.localisation,
-        'extincteur-type': material.typeExtincteur,
-        'extincteur-fabricant': material.fabricant,
-        'extincteur-modele': material.modele,
-        'extincteur-annee': material.annee,
-        'extincteur-capacite': material.capacite,
-        'extincteur-date-controle': material.dateControle,
-        'extincteur-prochain-controle': material.prochainControle,
-        'extincteur-etat-general': material.etatGeneral,
-        'extincteur-etat-general-comment': material.etatGeneralComment,
-        'extincteur-lisibilite': material.lisibilite,
-        'extincteur-panneau': material.panneau,
-        'extincteur-goupille': material.goupille,
-        'extincteur-pression': material.pression,
-        'extincteur-pesee': material.pesee,
-        'extincteur-joints': material.joints,
-        'extincteur-accessibilite': material.accessibilite,
-        'extincteur-observations': material.observations,
-        'extincteur-scelle': material.scelle,
-        'extincteur-remplacement-joint': material.remplacementJoint,
-        'extincteur-intervention-type': material.interventionType
-    });
-    
-    if (material.interventions) {
-        setCheckboxValue('extincteur-maa', material.interventions.maa);
-        setCheckboxValue('extincteur-eiee', material.interventions.eiee);
-        setCheckboxValue('extincteur-recharge', material.interventions.recharge);
-    }
-    
-    updateModalButton('add-extincteur-modal', 'Mettre à jour', updateExtincteur);
-    showModal('add-extincteur-modal');
-}
-
-function updateExtincteur() {
-    if (AppState.currentEditingMaterialIndex === -1) return;
-    
-    const updatedExtincteur = createExtincteurObject();
-    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedExtincteur;
-    
-    saveCurrentClientChanges();
-    closeModal('add-extincteur-modal');
-    displayVerificationList();
-    showSuccess('Extincteur mis à jour avec succès');
-}
-
-function editRIA(material) {
-    setFormValues({
-        'ria-id': material.id,
-        'ria-location': material.localisation,
-        'ria-type': material.typeRIA,
-        'ria-diametre': material.diametre,
-        'ria-longueur': material.longueur,
-        'ria-pression': material.pression,
-        'ria-date-controle': material.dateControle,
-        'ria-prochainControle': material.prochainControle,
-        'ria-etat-general': material.etatGeneral,
-        'ria-etat-general-comment': material.etatGeneralComment,
-        'ria-lisibilite': material.lisibilite,
-        'ria-panneau': material.panneau,
-        'ria-accessibilite': material.accessibilite,
-        'ria-observations': material.observations,
-        'ria-intervention-type': material.interventionType
-    });
-    
-    updateModalButton('add-ria-modal', 'Mettre à jour', updateRIA);
-    showModal('add-ria-modal');
-}
-
-function updateRIA() {
-    if (AppState.currentEditingMaterialIndex === -1) return;
-    
-    const updatedRIA = createRIAObject();
-    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedRIA;
-    
-    saveCurrentClientChanges();
-    closeModal('add-ria-modal');
-    displayVerificationList();
-    showSuccess('RIA mis à jour avec succès');
-}
-
-function editBAES(material) {
-    setFormValues({
-        'baes-id': material.id,
-        'baes-location': material.localisation,
-        'baes-type': material.typeBAES,
-        'baes-puissance': material.puissance,
-        'baes-autonomie': material.autonomie,
-        'baes-date-controle': material.dateControle,
-        'baes-prochainControle': material.prochainControle,
-        'baes-etat-general': material.etatGeneral,
-        'baes-etat-general-comment': material.etatGeneralComment,
-        'baes-fonctionnement': material.fonctionnement,
-        'baes-chargeur': material.chargeur,
-        'baes-accessibilite': material.accessibilite,
-        'baes-observations': material.observations,
-        'baes-intervention-type': material.interventionType
-    });
-    
-    updateModalButton('add-baes-modal', 'Mettre à jour', updateBAES);
-    showModal('add-baes-modal');
-}
-
-function updateBAES() {
-    if (AppState.currentEditingMaterialIndex === -1) return;
-    
-    const updatedBAES = createBAESObject();
-    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedBAES;
-    
-    saveCurrentClientChanges();
-    closeModal('add-baes-modal');
-    displayVerificationList();
-    showSuccess('BAES mis à jour avec succès');
-}
-
-function editAlarme(material) {
-    setFormValues({
-        'alarme-id': material.id,
-        'alarme-location': material.localisation,
-        'alarme-type': material.typeAlarme,
-        'alarme-date-verif': material.dateVerif,
-        'alarme-date-prochaine': material.dateProchaine,
-        'alarme-annee': material.annee,
-        'registre-securite': material.registreSecurite
-    });
-    
-    setCheckboxValue('alarme-batterie', material.batterie);
-    setCheckboxValue('alarme-fonctionnement', material.fonctionnement);
-    setCheckboxValue('alarme-accessibilite', material.accessibilite);
-    
-    AppState.currentAlarmePhotos = material.photos || [];
-    displayAlarmePhotos();
-    
-    updateModalButton('add-alarme-modal', 'Mettre à jour', updateAlarme);
-    showModal('add-alarme-modal');
-}
-
-function updateAlarme() {
-    if (AppState.currentEditingMaterialIndex === -1) return;
-    
-    const updatedAlarme = createAlarmeObject();
-    AppState.currentClient.materials[AppState.currentEditingMaterialIndex] = updatedAlarme;
-    
-    saveCurrentClientChanges();
-    closeModal('add-alarme-modal');
-    displayVerificationList();
-    showSuccess('Alarme mise à jour avec succès');
 }
 
 function displayAlarmePhotos() {
@@ -4755,9 +5241,15 @@ function previewReport() {
         return;
     }
     
-    const materials = AppState.currentClient.materials.filter(m => m.verified);
+    const currentYear = new Date().getFullYear();
+    const materials = AppState.verifiedMaterialsForReport || 
+        AppState.currentClient.materials.filter(m => 
+            m.verificationHistory && 
+            m.verificationHistory.some(v => v.verificationYear === currentYear && v.verified)
+        );
+    
     if (materials.length === 0) {
-        showError('Aucun matériel vérifié à afficher dans le rapport');
+        showError('Aucun matériel vérifié pour l\'année en cours à afficher dans le rapport');
         return;
     }
     
@@ -4768,29 +5260,12 @@ function previewReport() {
     
     const materialsByType = groupMaterialsByType(materials);
     
-    // Calculer les statistiques de conformité
     let totalConforme = 0;
     let totalNonConforme = 0;
     
     Object.values(materialsByType).forEach(items => {
         items.forEach(material => {
-            let isConforme = true;
-            switch(material.type) {
-                case 'extincteur':
-                    isConforme = isExtincteurConforme(material);
-                    break;
-                case 'ria':
-                    isConforme = isRIAConforme(material);
-                    break;
-                case 'baes':
-                    isConforme = isBAESConforme(material);
-                    break;
-                case 'alarme':
-                    isConforme = isAlarmeConforme(material);
-                    break;
-            }
-            
-            if (isConforme) {
+            if (checkMaterialConformity(material, currentYear)) {
                 totalConforme++;
             } else {
                 totalNonConforme++;
@@ -4803,12 +5278,12 @@ function previewReport() {
             <div class="pdf-header" style="border-bottom: 3px solid #1a365d; padding-bottom: 15px; margin-bottom: 20px;">
                 <div class="header-left" style="text-align: center;">
                     <h1 style="color: #1a365d; margin: 0; font-size: 28px;">PRÉVISUALISATION DU RAPPORT</h1>
-                    <h2 style="color: #2c5282; margin: 10px 0 0 0; font-size: 18px;">Vérification Annuelle des Équipements de Sécurité Incendie</h2>
+                    <h2 style="color: #2c5282; margin: 10px 0 0 0; font-size: 18px;">Vérification Annuelle ${currentYear} des Équipements de Sécurité Incendie</h2>
                 </div>
                 <div class="header-right" style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 14px;">
                     <div>
                         <p><strong>Date:</strong> ${today}</p>
-                        <p><strong>Référence:</strong> RAP-${new Date().getFullYear()}-${AppState.currentClient.id?.substr(0, 8) || '000000'}</p>
+                        <p><strong>Référence:</strong> RAP-${currentYear}-${AppState.currentClient.id?.substr(0, 8) || '000000'}</p>
                     </div>
                 </div>
             </div>
@@ -4833,8 +5308,8 @@ function previewReport() {
                 </h3>
                 <p style="color: ${totalNonConforme === 0 ? '#155724' : '#856404'}; margin: 10px 0 0 0; font-size: 16px;">
                     ${totalNonConforme === 0 
-                        ? `Tous les ${materials.length} matériels vérifiés sont conformes`
-                        : `${totalNonConforme} matériel(s) non conforme(s) sur ${materials.length}`}
+                        ? `Tous les matériels vérifiés (${materials.length}) sont conformes aux normes NF S 61-919`
+                        : `${totalNonConforme} matériel(s) non conforme(s) sur ${materials.length} vérifié(s)`}
                 </p>
             </div>
             
@@ -4875,43 +5350,10 @@ function previewReport() {
                         </thead>
                         <tbody>
                             ${items.map(material => {
-                                let isConforme = true;
-                                let conformiteText = 'CONFORME';
-                                let conformiteColor = '#28a745';
-                                let observations = material.observations || '';
-                                
-                                switch(type) {
-                                    case 'extincteur':
-                                        isConforme = isExtincteurConforme(material);
-                                        if (material.annee) {
-                                            const age = new Date().getFullYear() - parseInt(material.annee);
-                                            if (age >= 10) {
-                                                isConforme = false;
-                                                conformiteText = 'NON CONFORME (âge > 10 ans)';
-                                                conformiteColor = '#dc3545';
-                                            }
-                                        }
-                                        break;
-                                    case 'ria':
-                                        isConforme = isRIAConforme(material);
-                                        break;
-                                    case 'baes':
-                                        isConforme = isBAESConforme(material);
-                                        break;
-                                    case 'alarme':
-                                        isConforme = isAlarmeConforme(material);
-                                        break;
-                                }
-                                
-                                if (!isConforme && conformiteText === 'CONFORME') {
-                                    conformiteText = 'NON CONFORME';
-                                    conformiteColor = '#dc3545';
-                                }
-                                
-                                if (observations.toLowerCase().includes('non conforme')) {
-                                    conformiteText = 'NON CONFORME (observations)';
-                                    conformiteColor = '#dc3545';
-                                }
+                                const yearVerification = material.verificationHistory.find(v => v.verificationYear === currentYear);
+                                const isConforme = checkMaterialConformity(material, currentYear);
+                                const conformiteText = isConforme ? 'CONFORME' : 'NON CONFORME';
+                                const conformiteColor = isConforme ? '#28a745' : '#dc3545';
                                 
                                 return `
                                     <tr style="border-bottom: 1px solid #e2e8f0;">
@@ -4919,7 +5361,7 @@ function previewReport() {
                                         <td style="padding: 8px; border: 1px solid #ddd;">${material.localisation || material.location || 'Non spécifié'}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd;">${material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || ''}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd;">${material.annee || ''}</td>
-                                        <td style="padding: 8px; border: 1px solid #ddd;">${formatDate(material.dateVerification)}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd;">${yearVerification ? formatDate(yearVerification.dateVerification) : ''}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd;">
                                             <span style="background: ${conformiteColor}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">
                                                 ${conformiteText}
@@ -4933,6 +5375,11 @@ function previewReport() {
                 </div>
                 ` : ''
             ).join('')}
+            
+            <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+                <h3 style="color: #1a365d; margin-top: 0; font-size: 16px;">COMMENTAIRE FINAL</h3>
+                <p>${getElementValue('commentaire-final') || 'Vérification annuelle des équipements de sécurité incendie effectuée conformément aux normes NF S 61-919 en vigueur.'}</p>
+            </div>
             
             <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
                 <h3 style="color: #1a365d; margin-top: 0; font-size: 16px;">VALIDITÉ</h3>
@@ -4966,8 +5413,8 @@ function previewFacture() {
         return;
     }
     
-const modal = document.getElementById('facture-modal');
-const content = document.getElementById('facture-content');
+    const modal = document.getElementById('facture-modal');
+    const content = document.getElementById('facture-content');
     
     if (!modal || !content) {
         showError('Modal de prévisualisation non trouvé');
@@ -5100,16 +5547,13 @@ async function generateFacturePDF() {
             format: 'a4'
         });
         
-        // Configurations
         const margin = 15;
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
         const contentWidth = pageWidth - (2 * margin);
         
-        // Variables de position
         let currentY = margin;
         
-        // Fonctions utilitaires simplifiées
         const addText = (text, x, y, fontSize = 10, style = 'normal', align = 'left', color = [0, 0, 0]) => {
             doc.setFontSize(fontSize);
             doc.setFont('helvetica', style);
@@ -5123,13 +5567,11 @@ async function generateFacturePDF() {
             doc.line(margin, y, pageWidth - margin, y);
         };
         
-        // Calcul des totaux
         const totalHT = AppState.factureItems.reduce((sum, item) => sum + item.total, 0) + AppState.fraisDeplacement;
         const tva = totalHT * 0.20;
         const totalTTC = totalHT + tva;
         const today = new Date().toLocaleDateString('fr-FR');
         
-        // En-tête
         addText('FACTURE', margin, currentY, 20, 'bold', 'left', [220, 53, 69]);
         currentY += 10;
         
@@ -5140,7 +5582,6 @@ async function generateFacturePDF() {
         addLine(currentY, [220, 53, 69], 1);
         currentY += 10;
         
-        // Informations entreprise
         addText('VOTRE ENTREPRISE', margin, currentY, 12, 'bold', 'left', [73, 80, 87]);
         currentY += 7;
         addText('Adresse de votre entreprise', margin, currentY, 10);
@@ -5152,7 +5593,6 @@ async function generateFacturePDF() {
         addText('SIRET: 123 456 789 00000', margin, currentY, 10);
         currentY += 10;
         
-        // Informations client
         addText('CLIENT', margin + contentWidth/2, currentY - 25, 12, 'bold', 'left', [73, 80, 87]);
         const client = AppState.currentClient;
         addText(client.name, margin + contentWidth/2, currentY - 18, 10, 'bold');
@@ -5168,24 +5608,19 @@ async function generateFacturePDF() {
         
         currentY += 10;
         
-        // Tableau des articles
         addText('DÉTAIL DES ARTICLES', margin, currentY, 12, 'bold', 'left', [73, 80, 87]);
         currentY += 7;
         
-        // En-têtes du tableau
         const headers = ['Description', 'Qté', 'Prix HT', 'Total HT'];
         const colWidths = [80, 20, 30, 30];
         
-        // CORRECTION : Dessiner les en-têtes SANS rectangle de fond noir
-        doc.setFillColor(220, 53, 69); // Rouge pour le fond
+        doc.setFillColor(220, 53, 69);
         doc.setTextColor(255, 255, 255);
         doc.setFont('helvetica', 'bold');
         
         let xPos = margin;
         headers.forEach((header, i) => {
-            // Dessiner le rectangle avec couleur rouge
             doc.rect(xPos, currentY, colWidths[i], 8, 'F');
-            // Ajouter le texte
             doc.text(header, xPos + colWidths[i]/2, currentY + 5, { align: 'center' });
             xPos += colWidths[i];
         });
@@ -5194,13 +5629,10 @@ async function generateFacturePDF() {
         doc.setTextColor(0, 0, 0);
         doc.setFont('helvetica', 'normal');
         
-        // Articles
         AppState.factureItems.forEach((item, index) => {
-            // Vérifier si on dépasse la page
             if (currentY > pageHeight - 50) {
                 doc.addPage();
                 currentY = margin;
-                // Redessiner les en-têtes si nouvelle page
                 doc.setFillColor(220, 53, 69);
                 doc.setTextColor(255, 255, 255);
                 doc.setFont('helvetica', 'bold');
@@ -5217,7 +5649,6 @@ async function generateFacturePDF() {
                 doc.setFont('helvetica', 'normal');
             }
             
-            // Ligne de données
             const rowData = [
                 item.description.substring(0, 40),
                 item.quantity.toString(),
@@ -5225,9 +5656,8 @@ async function generateFacturePDF() {
                 `${item.total.toFixed(2)} €`
             ];
             
-            // Alterner les couleurs de fond pour les lignes
             if (index % 2 === 0) {
-                doc.setFillColor(248, 249, 250); // Gris très clair
+                doc.setFillColor(248, 249, 250);
                 doc.rect(margin, currentY, contentWidth, 7, 'F');
             }
             
@@ -5242,7 +5672,6 @@ async function generateFacturePDF() {
             currentY += 7;
         });
         
-        // Frais de déplacement
         if (AppState.fraisDeplacement > 0) {
             const rowData = [
                 'Frais de déplacement',
@@ -5268,7 +5697,6 @@ async function generateFacturePDF() {
         
         currentY += 10;
         
-        // Totaux - CORRECTION : Supprimer le rectangle qui causait le carré noir
         const totals = [
             { label: 'Total HT', value: totalHT.toFixed(2) + ' €' },
             { label: 'TVA (20%)', value: tva.toFixed(2) + ' €' },
@@ -5278,9 +5706,8 @@ async function generateFacturePDF() {
         totals.forEach((total, index) => {
             const isTotal = index === totals.length - 1;
             
-            // CORRECTION : Pas de doc.rect() ici pour éviter le carré noir
             if (isTotal) {
-                doc.setTextColor(220, 53, 69); // Rouge pour le total
+                doc.setTextColor(220, 53, 69);
                 doc.setFont('helvetica', 'bold');
             } else {
                 doc.setTextColor(0, 0, 0);
@@ -5293,13 +5720,11 @@ async function generateFacturePDF() {
             currentY += isTotal ? 8 : 6;
         });
         
-        // Réinitialiser la couleur
         doc.setTextColor(0, 0, 0);
         doc.setFont('helvetica', 'normal');
         
         currentY += 15;
         
-        // Informations de paiement
         addText('INFORMATIONS DE PAIEMENT', margin, currentY, 12, 'bold', 'left', [73, 80, 87]);
         currentY += 7;
         addText('Mode de règlement: Virement bancaire', margin, currentY, 10);
@@ -5312,14 +5737,45 @@ async function generateFacturePDF() {
         
         currentY += 15;
         
-        // Signature
-        addText('Fait pour valoir et servir que de droit', margin, currentY, 10, 'italic');
+        addText('SIGNATURES', margin, currentY, 12, 'bold', 'left', [73, 80, 87]);
         currentY += 10;
         
-        addLine(currentY, [0, 0, 0]);
-        addText(`Le ${today}`, margin, currentY + 5, 10);
+        addText('LE TECHNICIEN', margin, currentY, 10, 'bold');
+        currentY += 5;
         
-        // Sauvegarder le PDF
+        if (technicianSignaturePad && !technicianSignaturePad.isEmpty()) {
+            const signatureData = technicianSignaturePad.toDataURL('image/png');
+            const signatureWidth = 60;
+            const signatureHeight = 30;
+            doc.addImage(signatureData, 'PNG', margin, currentY, signatureWidth, signatureHeight);
+            currentY += signatureHeight + 10;
+        } else {
+            addLine(currentY, [0, 0, 0]);
+            addText('Signature et cachet', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
+            currentY += 20;
+        }
+        
+        addText('LE CLIENT', margin, currentY, 10, 'bold');
+        currentY += 5;
+        addText(client.name, margin, currentY, 10);
+        currentY += 5;
+        
+        if (clientSignaturePad && !clientSignaturePad.isEmpty()) {
+            const signatureData = clientSignaturePad.toDataURL('image/png');
+            const signatureWidth = 60;
+            const signatureHeight = 30;
+            doc.addImage(signatureData, 'PNG', margin, currentY, signatureWidth, signatureHeight);
+            currentY += signatureHeight + 10;
+        } else {
+            addLine(currentY, [0, 0, 0]);
+            addText('Signature', margin + 30, currentY + 5, 9, 'italic', 'left', [100, 100, 100]);
+            currentY += 20;
+        }
+        
+        addText('Fait pour valoir et servir que de droit', margin, currentY, 10, 'italic');
+        currentY += 10;
+        addText(`Le ${today}`, margin, currentY, 10);
+        
         const filename = `Facture_${AppState.factureNumero.replace(/\//g, '_')}.pdf`;
         doc.save(filename);
         
@@ -5334,19 +5790,14 @@ async function generateFacturePDF() {
 }
 
 // ==================== ALIAS POUR LES FONCTIONS PDF ====================
-
-// Ces fonctions sont des alias pour la compatibilité avec le HTML
 function generatePDFFromPreview() {
-    // Alias pour generatePDFReport
     generatePDFReport();
 }
 
 function generateFacturePDFFromPreview() {
-    // Alias pour generateFacturePDF
     generateFacturePDF();
 }
 
-// Fonctions avec d'autres noms pour compatibilité
 function generatePDF() {
     return generatePDFReport();
 }
@@ -5363,9 +5814,222 @@ function genererPDFRapport() {
     return generatePDFReport();
 }
 
-// ==================== AJOUTER TOUTES LES FONCTIONS AU WINDOW ====================
+// ==================== FONCTIONS DE RAFRAÎCHISSEMENT ====================
+function refreshAllLists() {
+    // Rafraîchir toutes les listes visibles
+    if (AppState.currentPage === 'materials') {
+        displayMaterialsListSimplified();
+    }
+    if (AppState.currentPage === 'verification') {
+        displayVerificationList();
+    }
+    if (AppState.currentPage === 'history') {
+        loadHistory();
+    }
+}
 
-// Exposer toutes les fonctions PDF
+// ==================== VÉRIFICATION DE CONFORMITÉ ====================
+function checkMaterialConformity(material, verificationYear) {
+    if (!material.verificationHistory) return false;
+    
+    const yearVerification = material.verificationHistory.find(v => v.verificationYear === verificationYear);
+    if (!yearVerification || !yearVerification.verified) {
+        return false;
+    }
+    
+    // Vérifications spécifiques par type
+    switch(material.type) {
+        case 'extincteur':
+            return checkExtincteurConformity(material);
+        case 'ria':
+            return checkRIAConformity(material);
+        case 'baes':
+            return checkBAESConformity(material);
+        case 'alarme':
+            return checkAlarmeConformity(material);
+        default:
+            return true;
+    }
+}
+
+function checkExtincteurConformity(material) {
+    // Vérifier l'âge
+    if (material.annee) {
+        const currentYear = new Date().getFullYear();
+        const age = currentYear - parseInt(material.annee);
+        if (age >= 10) {
+            return false;
+        }
+    }
+    
+    // Vérifier les observations
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    // Vérifier les champs OK/NOK
+    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite'];
+    for (const field of verificationFields) {
+        if (material[field] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function checkRIAConformity(material) {
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'accessibilite'];
+    for (const field of verificationFields) {
+        if (material[field] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function checkBAESConformity(material) {
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    const verificationFields = ['etatGeneral', 'fonctionnement', 'chargeur', 'accessibilite'];
+    for (const field of verificationFields) {
+        if (material[field] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function checkAlarmeConformity(material) {
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    if (!material.batterie || !material.fonctionnement || !material.accessibilite) {
+        return false;
+    }
+    
+    return true;
+}
+
+// ==================== FONCTIONS D'EXTINCTEUR ====================
+function resetExtincteurForm() {
+    const today = new Date().toISOString().split('T')[0];
+    const nextYear = new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0];
+    
+    setElementValue('extincteur-id', '');
+    setElementValue('extincteur-location', '');
+    setElementValue('extincteur-type', '');
+    setElementValue('extincteur-fabricant', '');
+    setElementValue('extincteur-modele', '');
+    setElementValue('extincteur-annee', new Date().getFullYear());
+    setElementValue('extincteur-capacite', '');
+    setElementValue('extincteur-pesee', '');
+    setElementValue('extincteur-observations', '');
+    setElementValue('extincteur-etat-general-comment', '');
+    setElementValue('extincteur-date-controle', today);
+    setElementValue('extincteur-prochain-controle', nextYear);
+    
+    resetOkNokFields(['etat-general', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite']);
+    setCheckboxValue('extincteur-maa', false);
+    setCheckboxValue('extincteur-eiee', false);
+    setCheckboxValue('extincteur-recharge', false);
+    setCheckboxValue('extincteur-scelle', false);
+    setCheckboxValue('extincteur-remplacement-joint', false);
+    
+    selectExtincteurInterventionType('verification');
+    clearPhotoGallery('extincteur-photo-gallery');
+    updateModalButton('add-extincteur-modal', 'Ajouter', addExtincteurToList);
+}
+
+function addExtincteurToList() {
+    if (!validateMaterialForm('extincteur')) {
+        return;
+    }
+    
+    const extincteur = createExtincteurObject();
+    addMaterialToList(extincteur);
+    closeModal('add-extincteur-modal');
+    showSuccess('Extincteur ajouté avec succès');
+}
+
+function createExtincteurObject() {
+    return {
+        type: 'extincteur',
+        id: getElementValue('extincteur-id'),
+        localisation: getElementValue('extincteur-location'),
+        typeExtincteur: getElementValue('extincteur-type'),
+        fabricant: getElementValue('extincteur-fabricant'),
+        modele: getElementValue('extincteur-modele'),
+        annee: getElementValue('extincteur-annee'),
+        capacite: getElementValue('extincteur-capacite'),
+        dateControle: getElementValue('extincteur-date-controle'),
+        prochainControle: getElementValue('extincteur-prochain-controle'),
+        etatGeneral: getElementValue('extincteur-etat-general'),
+        etatGeneralComment: getElementValue('extincteur-etat-general-comment'),
+        lisibilite: getElementValue('extincteur-lisibilite'),
+        panneau: getElementValue('extincteur-panneau'),
+        goupille: getElementValue('extincteur-goupille'),
+        pression: getElementValue('extincteur-pression'),
+        pesee: getElementValue('extincteur-pesee'),
+        joints: getElementValue('extincteur-joints'),
+        accessibilite: getElementValue('extincteur-accessibilite'),
+        observations: getElementValue('extincteur-observations'),
+        scelle: getCheckboxValue('extincteur-scelle'),
+        remplacementJoint: getCheckboxValue('extincteur-remplacement-joint'),
+        interventionType: getElementValue('extincteur-intervention-type'),
+        interventions: {
+            maa: getCheckboxValue('extincteur-maa'),
+            eiee: getCheckboxValue('extincteur-eiee'),
+            recharge: getCheckboxValue('extincteur-recharge')
+        },
+        photos: [],
+        verificationHistory: []
+    };
+}
+
+// ==================== CHARGEMENT DES FILTRES PERSISTANTS ====================
+function loadPersistentFilters() {
+    try {
+        const savedFilters = localStorage.getItem('verification_filters');
+        if (savedFilters) {
+            AppState.currentFamilyFilter = JSON.parse(savedFilters);
+        }
+    } catch (error) {
+        console.warn('Erreur chargement filtres:', error);
+        AppState.currentFamilyFilter = [...CONFIG.familyFilters];
+    }
+}
+
+// ==================== VÉRIFICATION ANNUELLE AU DÉMARRAGE ====================
+function checkAnnualVerification() {
+    if (!AppState.currentClient || !AppState.currentClient.materials) return;
+    
+    const currentYear = new Date().getFullYear();
+    let needsVerification = false;
+    
+    AppState.currentClient.materials.forEach(material => {
+        const status = getMaterialVerificationStatus(material, currentYear);
+        if (!status.verified) {
+            needsVerification = true;
+        }
+    });
+    
+    if (needsVerification && AppState.currentClient.lastVerificationYear !== currentYear) {
+        console.log('🔔 Vérification annuelle requise pour', AppState.currentClient.name);
+        showToast('Vérification annuelle requise pour ce client', 'warning', 5000);
+    }
+}
+
+// ==================== AJOUTER TOUTES LES FONCTIONS AU WINDOW ====================
 window.generatePDFReport = generatePDFReport;
 window.generateFacturePDF = generateFacturePDF;
 window.previewReport = previewReport;
@@ -5376,8 +6040,6 @@ window.generatePDF = generatePDF;
 window.generateFacture = generateFacture;
 window.enregistrerFacturePDF = enregistrerFacturePDF;
 window.genererPDFRapport = genererPDFRapport;
-
-// Fonctions d'édition de matériels
 window.addExtincteurToList = addExtincteurToList;
 window.addRIAToList = addRIAToList;
 window.addBAESToList = addBAESToList;
@@ -5386,11 +6048,6 @@ window.updateExtincteur = updateExtincteur;
 window.updateRIA = updateRIA;
 window.updateBAES = updateBAES;
 window.updateAlarme = updateAlarme;
-window.editMaterialForVerification = editMaterialForVerification;
-window.editExtincteur = editExtincteur;
-window.editRIA = editRIA;
-window.editBAES = editBAES;
-window.editAlarme = editAlarme;
 window.selectOkNok = selectOkNok;
 window.selectRIANok = selectRIANok;
 window.selectBAESNok = selectBAESNok;
@@ -5433,13 +6090,11 @@ window.createClient = createClient;
 window.deleteClient = deleteClient;
 window.selectClient = selectClient;
 window.openMaterialModal = openMaterialModal;
-window.removeMaterial = removeMaterial;
-window.removeMaterialFromVerification = removeMaterialFromVerification;
+window.editMaterial = editMaterial;
+window.removeMaterialPermanent = removeMaterialPermanent;
+window.removeFromVerification = removeFromVerification;
 window.verifyMaterial = verifyMaterial;
-window.unverifyMaterial = unverifyMaterial;
-window.verifyAllInFamily = verifyAllInFamily;
-window.toggleFamilyFilter = toggleFamilyFilter;
-window.completeVerification = completeVerification;
+window.resetMaterialVerification = resetMaterialVerification;
 window.viewClientHistory = viewClientHistory;
 window.closeSuccessModal = closeSuccessModal;
 window.closeErrorModal = closeErrorModal;
@@ -5450,113 +6105,33 @@ window.showDataManagementModal = showDataManagementModal;
 window.logoutUser = logoutUser;
 window.saveClients = saveClients;
 window.saveInterventions = saveInterventions;
+window.checkAnnualVerification = checkAnnualVerification;
+window.refreshAllLists = refreshAllLists;
+window.displayMaterialsListSimplified = displayMaterialsListSimplified;
+window.displayVerificationList = displayVerificationList;
+window.toggleFamilyFilter = toggleFamilyFilter;
+window.selectAllFamilies = selectAllFamilies;
+window.clearAllFamilies = clearAllFamilies;
+window.searchVerificationMaterials = searchVerificationMaterials;
+window.finishVerification = finishVerification;
 
-console.log('🎉 Application FireCheck Pro initialisée avec rapport PDF optimisé !');
-
-// ==================== AMÉLIORATION 1 : TOASTS ====================
-
-function showToast(message, type = 'success', duration = 3000) {
-    // Créer le toast
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.innerHTML = `
-        <i class="fas fa-${type === 'success' ? 'check-circle' : 
-                         type === 'error' ? 'exclamation-circle' : 
-                         'info-circle'}"></i>
-        <span>${message}</span>
-    `;
-    
-    // Style du toast
-    toast.style.cssText = `
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        padding: 12px 20px;
-        border-radius: 8px;
-        color: white;
-        z-index: 10000;
-        transform: translateY(100px);
-        opacity: 0;
-        transition: all 0.3s ease;
-        max-width: 300px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        font-weight: 500;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    `;
-    
-    // Couleurs selon le type
-    if (type === 'success') {
-        toast.style.background = 'linear-gradient(135deg, #28a745 0%, #218838 100%)';
-    } else if (type === 'error') {
-        toast.style.background = 'linear-gradient(135deg, #dc3545 0%, #c82333 100%)';
-    } else {
-        toast.style.background = 'linear-gradient(135deg, #17a2b8 0%, #138496 100%)';
-    }
-    
-    // Ajouter au DOM
-    document.body.appendChild(toast);
-    
-    // Animation d'entrée
-    setTimeout(() => {
-        toast.style.transform = 'translateY(0)';
-        toast.style.opacity = '1';
-    }, 10);
-    
-    // Animation de sortie
-    setTimeout(() => {
-        toast.style.transform = 'translateY(100px)';
-        toast.style.opacity = '0';
-        setTimeout(() => {
-            if (toast.parentNode) {
-                toast.remove();
-            }
-        }, 300);
-    }, duration);
-    
-    return toast;
-}
-
-// Remplacer les anciennes fonctions (optionnel)
-function showSuccess(message) {
-    showToast(message, 'success');
-}
-
-function showError(message) {
-    showToast(message, 'error');
-}
-
-// Exporter pour le HTML
-window.showToast = showToast;
-window.showSuccess = showSuccess;
-window.showError = showError;
-
-console.log('✅ Amélioration 1 : Toasts ajoutés');
-
-// ==================== AMÉLIORATION 4 : PRÉCHARGEMENT DES PAGES ====================
-
+// ==================== PRÉCHARGEMENT DES PAGES ====================
 function preloadNextPages() {
     console.log('🔄 Préchargement des pages suivantes...');
     
-    // Liste des pages à précharger
     const pagesToPreload = ['materials', 'verification', 'signature', 'history', 'planning'];
     let loadedCount = 0;
     
     pagesToPreload.forEach(page => {
         const pageElement = document.getElementById(`page-${page}`);
         if (pageElement && !pageElement.dataset.preloaded) {
-            // Marquer comme préchargé
             pageElement.dataset.preloaded = 'true';
             loadedCount++;
             
-            // Initialiser certains éléments si nécessaire
             if (page === 'materials') {
-                // Initialiser les boutons de la page matériels
                 const buttons = pageElement.querySelectorAll('button');
                 buttons.forEach(btn => {
                     if (btn.onclick) {
-                        // Garder les fonctions onclick existantes
                         btn.setAttribute('data-original-onclick', btn.onclick.toString());
                     }
                 });
@@ -5566,7 +6141,6 @@ function preloadNextPages() {
     
     console.log(`✅ ${loadedCount} page(s) préchargée(s)`);
     
-    // Afficher un toast si on a préchargé quelque chose
     if (loadedCount > 0) {
         showToast(`${loadedCount} page(s) préchargée(s) pour une navigation plus rapide`, 'success', 2000);
     }
@@ -5574,14 +6148,14 @@ function preloadNextPages() {
     return loadedCount;
 }
 
-// Fonction pour précharger au bon moment
 function initPagePreloading() {
-    // Précharger après le chargement initial
+    // Charger les filtres persistants
+    loadPersistentFilters();
+    
     setTimeout(() => {
         preloadNextPages();
     }, 2000);
     
-    // Précharger quand l'utilisateur est inactif
     let inactivityTimer;
     function resetInactivityTimer() {
         clearTimeout(inactivityTimer);
@@ -5590,10 +6164,9 @@ function initPagePreloading() {
             if (currentPage === 'clients') {
                 preloadNextPages();
             }
-        }, 5000); // Précharger après 5 secondes d'inactivité
+        }, 5000);
     }
     
-    // Réinitialiser le timer sur les interactions utilisateur
     ['mousemove', 'keydown', 'click', 'scroll'].forEach(event => {
         window.addEventListener(event, resetInactivityTimer);
     });
@@ -5601,10 +6174,659 @@ function initPagePreloading() {
     resetInactivityTimer();
 }
 
-// Exporter
 window.preloadNextPages = preloadNextPages;
 window.initPagePreloading = initPagePreloading;
 
-console.log('✅ Amélioration 4 : Préchargement des pages ajouté');
+// Vérification annuelle au démarrage
+setTimeout(() => {
+    checkAnnualVerification();
+}, 1000);
+
+console.log('🎉 Application FireCheck Pro avec vérification annuelle simplifiée initialisée avec succès !');
 
 
+// ==================== FILTRES AVEC COCHES VERTES SIMPLES ====================
+
+// Fonction principale de filtrage
+function filterVerification(type) {
+    console.log("Filtre cliqué :", type);
+    
+    if (type === 'all') {
+        // Basculer "Tous"
+        if (AppState.currentFamilyFilter.length === CONFIG.familyFilters.length) {
+            // Tous déjà sélectionnés → tout désélectionner
+            AppState.currentFamilyFilter = [];
+        } else {
+            // Sinon → tout sélectionner
+            AppState.currentFamilyFilter = [...CONFIG.familyFilters];
+        }
+    } else {
+        // Basculer un filtre individuel
+        const index = AppState.currentFamilyFilter.indexOf(type);
+        if (index === -1) {
+            AppState.currentFamilyFilter.push(type);
+        } else {
+            AppState.currentFamilyFilter.splice(index, 1);
+        }
+    }
+    
+    // Sauvegarder
+    localStorage.setItem('verification_filters', JSON.stringify(AppState.currentFamilyFilter));
+    
+    // Mettre à jour l'interface
+    updateFilterButtonsWithChecks();
+    
+    // Rafraîchir la liste
+    if (typeof displayVerificationList === 'function') {
+        displayVerificationList();
+    }
+}
+
+// Mettre à jour les boutons avec des coches vertes
+function updateFilterButtonsWithChecks() {
+    document.querySelectorAll('.family-filter-btn').forEach(btn => {
+        const type = btn.getAttribute('data-filter-type') || 
+                     btn.id.replace('filter-', '');
+        
+        // Vérifier si actif
+        let isActive = false;
+        
+        if (type === 'all') {
+            isActive = AppState.currentFamilyFilter.length === CONFIG.familyFilters.length;
+        } else {
+            isActive = AppState.currentFamilyFilter.includes(type);
+        }
+        
+        // Supprimer la coche existante
+        const existingCheck = btn.querySelector('.filter-checkmark');
+        if (existingCheck) {
+            existingCheck.remove();
+        }
+        
+        // Réinitialiser les styles
+        btn.style.backgroundColor = '#f8f9fa';
+        btn.style.border = '1px solid #dee2e6';
+        btn.style.color = '#495057';
+        btn.style.position = 'relative';
+        btn.style.paddingRight = '35px'; // Espace pour la coche
+        
+        // Ajouter la coche si actif
+        if (isActive) {
+            const checkmark = document.createElement('span');
+            checkmark.className = 'filter-checkmark';
+            checkmark.innerHTML = '✓';
+            checkmark.style.cssText = `
+                position: absolute;
+                right: 10px;
+                top: 50%;
+                transform: translateY(-50%);
+                color: #28a745;
+                font-weight: bold;
+                font-size: 14px;
+            `;
+            btn.appendChild(checkmark);
+            
+            // Style léger pour le bouton actif
+            btn.style.backgroundColor = '#f0f9f0';
+            btn.style.borderColor = '#c3e6cb';
+        }
+        
+        // Classe CSS pour compatibilité
+        btn.classList.toggle('active', isActive);
+    });
+}
+
+// CSS pour les coches
+function addCheckmarkStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .family-filter-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        
+        .family-filter-btn {
+            position: relative;
+            padding: 8px 35px 8px 15px;
+            border: 1px solid #dee2e6;
+            background: #f8f9fa;
+            border-radius: 6px;
+            color: #495057;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 40px;
+        }
+        
+        .family-filter-btn:hover {
+            background: #e9ecef;
+            transform: translateY(-1px);
+        }
+        
+        .family-filter-btn.active {
+            background: #f0f9f0;
+            border-color: #c3e6cb;
+        }
+        
+        .family-filter-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            color: #495057;
+            font-weight: 500;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .family-filter-buttons {
+                gap: 8px;
+            }
+            
+            .family-filter-btn {
+                padding: 6px 30px 6px 12px;
+                font-size: 0.85em;
+                min-height: 36px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .family-filter-buttons {
+                justify-content: center;
+            }
+            
+            .family-filter-btn {
+                flex: 1;
+                min-width: 140px;
+                justify-content: center;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// Initialiser les filtres
+function initFilterVerification() {
+    // Charger les préférences
+    try {
+        const saved = localStorage.getItem('verification_filters');
+        if (saved) {
+            AppState.currentFamilyFilter = JSON.parse(saved);
+        } else {
+            // Par défaut : tout sélectionné
+            AppState.currentFamilyFilter = [...CONFIG.familyFilters];
+        }
+    } catch (e) {
+        console.warn("Erreur filtres:", e);
+        AppState.currentFamilyFilter = [...CONFIG.familyFilters];
+    }
+    
+    // Ajouter les styles
+    addCheckmarkStyles();
+    
+    // Mettre à jour les boutons
+    setTimeout(updateFilterButtonsWithChecks, 500);
+}
+
+// Exposer les fonctions
+window.filterVerification = filterVerification;
+window.updateFilterButtonsWithChecks = updateFilterButtonsWithChecks;
+
+// Initialiser au chargement
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(initFilterVerification, 1000);
+});
+
+console.log('✅ Filtres avec coches vertes chargés');
+
+// ==================== FONCTION DE RECHERCHE CORRIGÉE ====================
+
+// Fonction de recherche principale
+function searchVerification() {
+    console.log("🔍 searchVerification() appelée");
+    
+    // 1. Récupérer la valeur de recherche
+    const searchInput = document.getElementById('verification-search');
+    if (!searchInput) {
+        console.error("❌ Input de recherche non trouvé");
+        return;
+    }
+    
+    const searchTerm = searchInput.value.toLowerCase().trim();
+    console.log("Terme recherché:", searchTerm);
+    
+    // 2. Stocker dans AppState
+    AppState.verificationSearchTerm = searchTerm;
+    
+    // 3. Appeler la fonction d'affichage existante
+    if (typeof displayVerificationList === 'function') {
+        displayVerificationList();
+    } else {
+        console.error("❌ displayVerificationList non disponible");
+        // Fallback: filtrer manuellement
+        filterMaterialsManually(searchTerm);
+    }
+}
+
+// Fallback si displayVerificationList n'existe pas
+function filterMaterialsManually(searchTerm) {
+    const items = document.querySelectorAll('.compact-material-item');
+    console.log(`${items.length} éléments à filtrer`);
+    
+    items.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        if (searchTerm === '' || text.includes(searchTerm)) {
+            item.style.display = 'flex';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+
+// Rendre la fonction disponible GLOBALEMENT
+window.searchVerification = searchVerification;
+
+// Pour le débogage
+console.log("✅ searchVerification chargée dans window");
+
+
+// ==================== FONCTION TERMINER LA VÉRIFICATION AVEC FILTRES ====================
+
+function completeVerification() {
+    console.log("🎯 Terminer la vérification avec filtres");
+    
+    // Vérifier qu'un client est sélectionné
+    if (!AppState.currentClient) {
+        showError("Veuillez d'abord sélectionner un client");
+        return;
+    }
+    
+    // Vérifier qu'il y a des matériels
+    if (!AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
+        showError("Aucun matériel dans la liste du client");
+        return;
+    }
+    
+    const currentYear = new Date().getFullYear();
+    
+    // 1. Récupérer les matériels FILTRÉS
+    const filteredMaterials = getFilteredMaterials();
+    
+    if (filteredMaterials.length === 0) {
+        showError("Aucun matériel correspond aux filtres sélectionnés");
+        return;
+    }
+    
+    // 2. Vérifier que TOUS les matériels filtrés sont validés
+    const allVerified = filteredMaterials.every(material => {
+        const status = getMaterialVerificationStatus(material, currentYear);
+        return status.verified;
+    });
+    
+    if (!allVerified) {
+        const pendingCount = filteredMaterials.filter(m => {
+            const status = getMaterialVerificationStatus(m, currentYear);
+            return !status.verified;
+        }).length;
+        
+        showError(`${pendingCount} matériel(s) restent à valider dans les filtres sélectionnés`);
+        return;
+    }
+    
+    // 3. Demander confirmation
+    const filtersText = AppState.currentFamilyFilter.length === CONFIG.familyFilters.length 
+        ? "Tous les matériels" 
+        : AppState.currentFamilyFilter.map(f => getFamilyName(f)).join(", ");
+    
+    if (!confirm(`Voulez-vous terminer la vérification de ${filteredMaterials.length} matériel(s) (${filtersText}) ?
+
+✓ Les matériels vérifiés seront exportés dans le rapport PDF
+✓ Vous serez redirigé vers l'onglet Signature
+✓ Le rapport pourra être généré immédiatement`)) {
+        return;
+    }
+    
+    // 4. Préparer les données pour le rapport PDF
+    AppState.verifiedMaterialsForReport = filteredMaterials;
+    
+    // 5. Mettre à jour le client
+    AppState.currentClient.lastVerificationYear = currentYear;
+    AppState.currentClient.lastVerificationDate = new Date().toISOString();
+    
+    // 6. Sauvegarder
+    if (typeof saveCurrentClientChanges === 'function') {
+        saveCurrentClientChanges();
+    }
+    
+    // 7. Afficher succès
+    showSuccess(`${filteredMaterials.length} matériel(s) vérifié(s) - Redirection vers Signature...`);
+    
+    // 8. Désactiver le bouton temporairement
+    const completeBtn = document.getElementById('complete-btn');
+    if (completeBtn) {
+        completeBtn.disabled = true;
+        completeBtn.innerHTML = '<i class="fas fa-check-circle"></i> Terminée !';
+    }
+    
+    // 9. Rediriger vers la signature après 2 secondes
+    setTimeout(() => {
+        navigateTo('signature');
+        
+        // Réactiver le bouton après la redirection
+        setTimeout(() => {
+            if (completeBtn) {
+                completeBtn.disabled = false;
+                completeBtn.innerHTML = '<i class="fas fa-check-double"></i> Terminer la vérification';
+            }
+        }, 3000);
+    }, 2000);
+}
+
+// Obtenir le nom de la famille
+function getFamilyName(family) {
+    const names = {
+        'extincteur': 'Extincteurs',
+        'ria': 'RIA',
+        'baes': 'BAES',
+        'alarme': 'Alarmes'
+    };
+    return names[family] || family;
+}
+
+// Mettre à jour l'état du bouton selon les filtres
+function updateCompleteButton() {
+    const completeBtn = document.getElementById('complete-btn');
+    if (!completeBtn) return;
+    
+    // Si pas de client ou pas de matériels
+    if (!AppState.currentClient || !AppState.currentClient.materials) {
+        completeBtn.disabled = true;
+        completeBtn.title = "Sélectionnez d'abord un client avec des matériels";
+        return;
+    }
+    
+    // Si pas de filtres sélectionnés
+    if (AppState.currentFamilyFilter.length === 0) {
+        completeBtn.disabled = true;
+        completeBtn.title = "Sélectionnez au moins un type de matériel dans les filtres";
+        return;
+    }
+    
+    const currentYear = new Date().getFullYear();
+    
+    // 1. Récupérer les matériels filtrés
+    const filteredMaterials = getFilteredMaterials();
+    
+    if (filteredMaterials.length === 0) {
+        completeBtn.disabled = true;
+        completeBtn.title = "Aucun matériel correspond aux filtres sélectionnés";
+        return;
+    }
+    
+    // 2. Vérifier combien sont vérifiés
+    const verifiedCount = filteredMaterials.filter(material => {
+        const status = getMaterialVerificationStatus(material, currentYear);
+        return status.verified;
+    }).length;
+    
+    const pendingCount = filteredMaterials.length - verifiedCount;
+    
+    // 3. Déterminer si le bouton doit être activé
+    const allVerified = pendingCount === 0;
+    
+    completeBtn.disabled = !allVerified;
+    
+    // 4. Mettre à jour le texte et l'info-bulle
+    if (allVerified) {
+        completeBtn.title = `Tous les matériels sont vérifiés (${filteredMaterials.length}) - Cliquez pour générer le rapport`;
+        
+        // Mettre à jour le texte du bouton
+        const filtersText = AppState.currentFamilyFilter.length === CONFIG.familyFilters.length 
+            ? "Tous" 
+            : AppState.currentFamilyFilter.map(f => getFamilyName(f).substring(0, 3)).join("+");
+        
+        const btnSpan = completeBtn.querySelector('span');
+        if (btnSpan) {
+            btnSpan.textContent = `Terminer (${filtersText}: ${filteredMaterials.length})`;
+        }
+    } else {
+        completeBtn.title = `${pendingCount} matériel(s) à vérifier dans les filtres sélectionnés`;
+        
+        const btnSpan = completeBtn.querySelector('span');
+        if (btnSpan) {
+            btnSpan.textContent = `Terminer (${pendingCount} restant(s))`;
+        }
+    }
+}
+
+// Fonction pour obtenir les matériels filtrés (doit exister)
+function getFilteredMaterials() {
+    if (!AppState.currentClient || !AppState.currentClient.materials) {
+        return [];
+    }
+    
+    // Filtrer par famille
+    let filtered = AppState.currentClient.materials.filter(material => {
+        return AppState.currentFamilyFilter.includes(material.type);
+    });
+    
+    // Filtrer par recherche si applicable
+    const searchInput = document.getElementById('verification-search');
+    if (searchInput && searchInput.value.trim() !== '') {
+        const searchTerm = searchInput.value.toLowerCase().trim();
+        filtered = filtered.filter(material => {
+            const searchableText = [
+                material.id || material.numero || '',
+                material.localisation || material.location || '',
+                material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || '',
+                material.observations || ''
+            ].join(' ').toLowerCase();
+            
+            return searchableText.includes(searchTerm);
+        });
+    }
+    
+    return filtered;
+}
+
+// Vérifier l'état automatiquement
+function checkVerificationStatus() {
+    if (AppState.currentPage === 'verification') {
+        updateCompleteButton();
+        
+        // Vérifier à nouveau dans 1 seconde
+        setTimeout(checkVerificationStatus, 1000);
+    }
+}
+
+// Surveiller les changements de filtres
+function watchFilterChanges() {
+    // Sauvegarder la fonction originale
+    const originalFilterVerification = window.filterVerification;
+    
+    // Redéfinir pour surveiller les changements
+    if (originalFilterVerification) {
+        window.filterVerification = function(type) {
+            const result = originalFilterVerification(type);
+            
+            // Mettre à jour le bouton après changement de filtre
+            setTimeout(updateCompleteButton, 100);
+            
+            return result;
+        };
+    }
+    
+    // Surveiller aussi les changements de recherche
+    const searchInput = document.getElementById('verification-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            setTimeout(updateCompleteButton, 300);
+        });
+    }
+}
+
+// Initialiser le système
+function initVerificationCompleteSystem() {
+    console.log("🔄 Initialisation système de vérification");
+    
+    // Vérifier que le bouton existe
+    let completeBtn = document.getElementById('complete-btn');
+    
+    if (!completeBtn) {
+        const actionsDiv = document.querySelector('.page-actions');
+        if (actionsDiv) {
+            completeBtn = document.createElement('button');
+            completeBtn.id = 'complete-btn';
+            completeBtn.className = 'btn btn-success';
+            completeBtn.innerHTML = '<i class="fas fa-check-double"></i> <span>Terminer la vérification</span>';
+            completeBtn.onclick = completeVerification;
+            actionsDiv.appendChild(completeBtn);
+        }
+    }
+    
+    // Surveiller les filtres
+    watchFilterChanges();
+    
+    // Démarrer la vérification automatique
+    setTimeout(checkVerificationStatus, 500);
+    
+    // Mettre à jour quand un matériel est validé
+    const originalVerifyMaterial = window.verifyMaterial;
+    if (originalVerifyMaterial) {
+        window.verifyMaterial = function(index) {
+            const result = originalVerifyMaterial(index);
+            setTimeout(updateCompleteButton, 100);
+            return result;
+        };
+    }
+    
+    // Même chose pour reset
+    const originalResetVerification = window.resetMaterialVerification;
+    if (originalResetVerification) {
+        window.resetMaterialVerification = function(index) {
+            const result = originalResetVerification(index);
+            setTimeout(updateCompleteButton, 100);
+            return result;
+        };
+    }
+}
+
+// CSS amélioré pour le bouton
+const verificationButtonCSS = document.createElement('style');
+verificationButtonCSS.textContent = `
+    #complete-btn {
+        padding: 12px 24px;
+        font-size: 1.1em;
+        font-weight: 600;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 260px;
+        justify-content: center;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    #complete-btn:not(:disabled) {
+        background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+        border: none;
+        box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+    }
+    
+    #complete-btn:not(:disabled):hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(40, 167, 69, 0.4);
+        background: linear-gradient(135deg, #1e7e34 0%, #155724 100%);
+    }
+    
+    #complete-btn:disabled {
+        background: #6c757d;
+        opacity: 0.7;
+        cursor: not-allowed;
+        box-shadow: none;
+    }
+    
+    #complete-btn i {
+        font-size: 1.2em;
+    }
+    
+    /* Indicateur visuel */
+    #complete-btn::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        transition: left 0.5s;
+    }
+    
+    #complete-btn:not(:disabled):hover::after {
+        left: 100%;
+    }
+    
+    @media (max-width: 768px) {
+        #complete-btn {
+            padding: 10px 20px;
+            font-size: 1em;
+            min-width: 240px;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        #complete-btn {
+            width: 100%;
+            min-width: auto;
+        }
+    }
+`;
+document.head.appendChild(verificationButtonCSS);
+
+// Intégration avec la navigation
+const originalNavigate = window.navigateTo;
+if (originalNavigate) {
+    window.navigateTo = function(page) {
+        originalNavigate(page);
+        
+        if (page === 'verification') {
+            // Initialiser après l'affichage de la page
+            setTimeout(initVerificationCompleteSystem, 300);
+        }
+    };
+}
+
+// Exposer les fonctions
+window.completeVerification = completeVerification;
+window.updateCompleteButton = updateCompleteButton;
+window.getFilteredMaterials = getFilteredMaterials;
+
+// Initialiser au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    // Vérifier si on est déjà sur la page vérification
+    if (AppState.currentPage === 'verification') {
+        setTimeout(initVerificationCompleteSystem, 1000);
+    }
+    
+    // Initialiser les filtres par défaut si vide
+    if (!AppState.currentFamilyFilter || AppState.currentFamilyFilter.length === 0) {
+        AppState.currentFamilyFilter = [...CONFIG.familyFilters];
+    }
+});
+
+console.log("✅ Système 'Terminer la vérification' chargé avec gestion des filtres");
+
+function goToVerification() {
+    // Changer d'onglet vers la vérification
+    const verificationTab = document.querySelector('.nav-tab[data-page="verification"]');
+    if (verificationTab) {
+        verificationTab.click();
+    }
+}
