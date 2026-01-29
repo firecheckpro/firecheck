@@ -1,5 +1,5 @@
 // FireCheck Pro - Application PWA de vérification sécurité incendie
-// Version optimisée avec système de vérification annuelle simplifié
+// Version optimisée avec système de vérification annuelle simplifiée
 // ==================== CONFIGURATION ====================
 const CONFIG = {
     localStorageKeys: {
@@ -672,6 +672,9 @@ async function initApp() {
         
         // Ajouter le CSS simplifié pour la vérification
         addSimpleVerificationCSS();
+        
+        // Ajouter le CSS pour la conformité
+        addConformityCSS();
         
         navigateTo(AppState.currentPage || 'clients');
         
@@ -2268,6 +2271,38 @@ function displayVerificationList() {
         const materialInfo = getMaterialInfo(material.type);
         const status = getMaterialVerificationStatus(material, currentYear);
         const isVerified = status.verified;
+
+        // Récupérer la décision explicite
+        const verification = material.verificationHistory?.find(v => v.verificationYear === currentYear);
+        const conformeExplicite = verification?.conforme;
+
+        // Déterminer l'affichage
+        let statusColor, statusText, statusIcon;
+
+        if (isVerified) {
+            if (conformeExplicite === true) {
+                // ✅ Conforme (choix explicite)
+                statusColor = 'success';
+                statusText = 'Conforme';
+                statusIcon = 'fa-check-circle';
+            } else if (conformeExplicite === false) {
+                // ❌ Non conforme (choix explicite)
+                statusColor = 'danger';
+                statusText = 'Non conforme';
+                statusIcon = 'fa-exclamation-triangle';
+            } else {
+                // ⚠️ Vérifié mais pas de choix explicite (ancien système)
+                const autoConforme = checkMaterialConformityAuto(material);
+                statusColor = autoConforme ? 'success' : 'warning';
+                statusText = autoConforme ? 'Conforme (auto)' : 'Non conforme (auto)';
+                statusIcon = autoConforme ? 'fa-check-circle' : 'fa-exclamation-triangle';
+            }
+        } else {
+            // 🔄 À vérifier
+            statusColor = 'warning';
+            statusText = 'À vérifier';
+            statusIcon = 'fa-clock';
+        }
         
         if (isVerified) verifiedCount++;
         
@@ -2278,11 +2313,6 @@ function displayVerificationList() {
         const verificationDate = status.currentVerification?.dateVerification 
             ? `<div class="verification-date"><i class="fas fa-calendar-check"></i> Vérifié le ${formatDate(status.currentVerification.dateVerification)}</div>`
             : '';
-        
-        // Couleur et texte de statut
-        const statusColor = isVerified ? 'success' : 'warning';
-        const statusText = isVerified ? 'Vérifié' : 'À vérifier';
-        const statusIcon = isVerified ? 'fa-check-circle' : 'fa-clock';
         
         return `
             <div class="compact-material-item ${materialInfo.class}" id="verif-material-${originalFullIndex}">
@@ -2449,29 +2479,45 @@ function getMaterialVerificationStatus(material, currentYear) {
     };
 }
 
-function updateMaterialVerification(material, currentYear, verified = true) {
+// ==================== NOUVELLE FONCTION updateMaterialVerification AVEC CONFORMITÉ ====================
+function updateMaterialVerification(material, currentYear, verified = true, conforme = null, nonConformiteRaisons = []) {
     if (!material.verificationHistory) {
         material.verificationHistory = [];
     }
     
     let currentYearVerification = material.verificationHistory.find(v => v.verificationYear === currentYear);
+    
     if (!currentYearVerification) {
         currentYearVerification = {
             verified: verified,
+            conforme: conforme,
             verificationYear: currentYear,
             dateVerification: verified ? new Date().toISOString().split('T')[0] : null,
-            verifiedBy: verified ? (getElementValue('technician-name') || 'Technicien') : ''
+            verifiedBy: verified ? (getElementValue('technician-name') || 'Technicien') : '',
+            nonConformiteRaisons: nonConformiteRaisons
         };
         material.verificationHistory.push(currentYearVerification);
     } else {
         currentYearVerification.verified = verified;
+        if (conforme !== null) {
+            currentYearVerification.conforme = conforme;
+        }
         currentYearVerification.dateVerification = verified ? new Date().toISOString().split('T')[0] : null;
         currentYearVerification.verifiedBy = verified ? (getElementValue('technician-name') || 'Technicien') : '';
+        
+        if (nonConformiteRaisons.length > 0) {
+            currentYearVerification.nonConformiteRaisons = nonConformiteRaisons;
+        }
+        
+        if (conforme === true) {
+            currentYearVerification.nonConformiteRaisons = [];
+        }
     }
     
     return currentYearVerification;
 }
 
+// ==================== NOUVELLE FONCTION verifyMaterial AVEC DÉCISION DE CONFORMITÉ ====================
 function verifyMaterial(index) {
     if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
         showError("Matériel non trouvé");
@@ -2482,22 +2528,150 @@ function verifyMaterial(index) {
     const material = AppState.currentClient.materials[index];
     const materialInfo = getMaterialInfo(material.type);
     
-    if (!confirm(`Voulez-vous vraiment valider le ${materialInfo.text.toLowerCase()} ${material.id || material.numero} pour l'année ${currentYear} ?`)) {
-        return;
-    }
+    // Vérification automatique pour information
+    const autoConforme = checkMaterialConformityAuto(material);
+    const autoSuggestion = autoConforme ? "CONFORME" : "NON CONFORME";
     
-    updateMaterialVerification(material, currentYear, true);
+    // Demander explicitement la conformité
+    const decision = confirm(`DÉCISION DE CONFORMITÉ
+
+Matériel : ${materialInfo.text} ${material.id || material.numero}
+Localisation : ${material.localisation || material.location}
+
+Suggestion système : ${autoSuggestion}
+
+✅ Cliquez sur "OK" pour marquer comme CONFORME
+❌ Cliquez sur "Annuler" pour marquer comme NON CONFORME
+
+Le technicien a toujours le dernier mot sur la conformité.`);
+    
+    if (decision) {
+        // CONFORME
+        updateMaterialVerification(material, currentYear, true, true, []);
+        showSuccess(`${materialInfo.text} marqué comme CONFORME par le technicien`);
+    } else {
+        // NON CONFORME - Demander les raisons
+        const raisonsText = prompt(`RAISONS DE NON-CONFORMITÉ
+
+Pour le ${materialInfo.text.toLowerCase()} ${material.id || material.numero}, veuillez indiquer les raisons (séparées par des virgules) :
+
+Exemples :
+- Joints usés
+- Pression insuffisante
+- Accessibilité limitée
+- Panneau illisible
+- Âge dépassé (${material.annee ? new Date().getFullYear() - parseInt(material.annee) + ' ans' : 'âge non renseigné'})`, "");
+        
+        let raisons = [];
+        if (raisonsText && raisonsText.trim() !== '') {
+            raisons = raisonsText.split(',').map(r => r.trim()).filter(r => r !== '');
+        } else {
+            raisons = ["Non conforme (sans détail)"];
+        }
+        
+        updateMaterialVerification(material, currentYear, true, false, raisons);
+        showWarning(`${materialInfo.text} marqué comme NON CONFORME : ${raisons.join(', ')}`);
+    }
     
     // Mettre à jour l'année de dernière vérification du client
     AppState.currentClient.lastVerificationYear = currentYear;
     
     saveCurrentClientChanges();
     refreshAllLists();
-    
-    showSuccess(`${materialInfo.text} validé pour l'année ${currentYear}`);
-    
-    // Mettre à jour le bouton de fin de vérification
     updateFinishButton();
+}
+
+// ==================== NOUVELLE FONCTION checkMaterialConformity AVEC PRIORITÉ AU CHOIX EXPLICITE ====================
+function checkMaterialConformity(material, verificationYear) {
+    if (!material.verificationHistory) return false;
+    
+    const yearVerification = material.verificationHistory.find(v => v.verificationYear === verificationYear);
+    
+    if (!yearVerification || !yearVerification.verified) {
+        return false;
+    }
+    
+    // PRIORITÉ AU CHOIX EXPLICITE DU TECHNICIEN
+    if (yearVerification.conforme !== undefined && yearVerification.conforme !== null) {
+        return yearVerification.conforme === true;
+    }
+    
+    // FALLBACK : Calcul automatique (ancien système)
+    console.log(`Aucun choix explicite pour ${material.id}, calcul automatique`);
+    return checkMaterialConformityAuto(material);
+}
+
+// ==================== NOUVELLE FONCTION checkMaterialConformityAuto POUR LE FALLBACK ====================
+function checkMaterialConformityAuto(material) {
+    switch(material.type) {
+        case 'extincteur':
+            // Logique existante de checkExtincteurConformity
+            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+                return false;
+            }
+            
+            if (material.annee) {
+                const currentYear = new Date().getFullYear();
+                const age = currentYear - parseInt(material.annee);
+                if (age >= 10) {
+                    return false;
+                }
+            }
+            
+            const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite'];
+            for (const field of verificationFields) {
+                if (material[field] === 'Non OK') {
+                    return false;
+                }
+            }
+            
+            return true;
+            
+        case 'ria':
+            // Logique existante de checkRIAConformity
+            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+                return false;
+            }
+            
+            const riaFields = ['etatGeneral', 'lisibilite', 'panneau', 'accessibilite'];
+            for (const field of riaFields) {
+                if (material[field] === 'Non OK') {
+                    return false;
+                }
+            }
+            
+            return true;
+            
+        case 'baes':
+            // Logique existante de checkBAESConformity
+            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+                return false;
+            }
+            
+            const baesFields = ['etatGeneral', 'fonctionnement', 'chargeur', 'accessibilite'];
+            for (const field of baesFields) {
+                if (material[field] === 'Non OK') {
+                    return false;
+                }
+            }
+            
+            return true;
+            
+        case 'alarme':
+            // Logique existante de checkAlarmeConformity
+            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+                return false;
+            }
+            
+            if (!material.batterie || !material.fonctionnement || !material.accessibilite) {
+                return false;
+            }
+            
+            return true;
+            
+        default:
+            return true;
+    }
 }
 
 function resetMaterialVerification(index) {
@@ -3681,6 +3855,10 @@ function showError(message) {
     showToast(message, 'error');
 }
 
+function showWarning(message) {
+    showToast(message, 'error'); // On utilise 'error' pour les avertissements aussi
+}
+
 function closeSuccessModal() {
     const modal = document.getElementById('success-modal');
     if (modal) {
@@ -4289,6 +4467,37 @@ function addDataManagementCSS() {
         }
     `;
     document.head.appendChild(style);
+}
+
+// ==================== CSS POUR LA CONFORMITÉ ====================
+function addConformityCSS() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .status-danger {
+            color: #dc3545;
+            background: rgba(220, 53, 69, 0.1);
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border: 1px solid rgba(220, 53, 69, 0.2);
+        }
+        
+        .status-danger i {
+            color: #dc3545;
+        }
+        
+        .material-status.status-danger {
+            color: #dc3545;
+        }
+    `;
+    
+    if (!document.getElementById('conformity-css')) {
+        style.id = 'conformity-css';
+        document.head.appendChild(style);
+    }
 }
 
 // ==================== FONCTIONS D'UTILITÉ SUPPLÉMENTAIRES ====================
@@ -5828,98 +6037,6 @@ function refreshAllLists() {
     }
 }
 
-// ==================== VÉRIFICATION DE CONFORMITÉ ====================
-function checkMaterialConformity(material, verificationYear) {
-    if (!material.verificationHistory) return false;
-    
-    const yearVerification = material.verificationHistory.find(v => v.verificationYear === verificationYear);
-    if (!yearVerification || !yearVerification.verified) {
-        return false;
-    }
-    
-    // Vérifications spécifiques par type
-    switch(material.type) {
-        case 'extincteur':
-            return checkExtincteurConformity(material);
-        case 'ria':
-            return checkRIAConformity(material);
-        case 'baes':
-            return checkBAESConformity(material);
-        case 'alarme':
-            return checkAlarmeConformity(material);
-        default:
-            return true;
-    }
-}
-
-function checkExtincteurConformity(material) {
-    // Vérifier l'âge
-    if (material.annee) {
-        const currentYear = new Date().getFullYear();
-        const age = currentYear - parseInt(material.annee);
-        if (age >= 10) {
-            return false;
-        }
-    }
-    
-    // Vérifier les observations
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    // Vérifier les champs OK/NOK
-    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite'];
-    for (const field of verificationFields) {
-        if (material[field] === 'Non OK') {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-function checkRIAConformity(material) {
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'accessibilite'];
-    for (const field of verificationFields) {
-        if (material[field] === 'Non OK') {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-function checkBAESConformity(material) {
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    const verificationFields = ['etatGeneral', 'fonctionnement', 'chargeur', 'accessibilite'];
-    for (const field of verificationFields) {
-        if (material[field] === 'Non OK') {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-function checkAlarmeConformity(material) {
-    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
-    }
-    
-    if (!material.batterie || !material.fonctionnement || !material.accessibilite) {
-        return false;
-    }
-    
-    return true;
-}
-
 // ==================== FONCTIONS D'EXTINCTEUR ====================
 function resetExtincteurForm() {
     const today = new Date().toISOString().split('T')[0];
@@ -6830,3 +6947,43 @@ function goToVerification() {
         verificationTab.click();
     }
 }
+
+// ==================== DÉSACTIVATION RAPIDE DU SWIPE ====================
+document.addEventListener('DOMContentLoaded', function() {
+    // Supprimer tous les écouteurs de swipe existants
+    document.removeEventListener('touchstart', initSwipeNavigation);
+    document.removeEventListener('touchend', initSwipeNavigation);
+    
+    // Désactiver la fonction de swipe
+    window.handleSwipeGesture = function() {
+        return false;
+    };
+    
+    // Désactiver la navigation par swipe
+    window.navigateToNextPage = function() {
+        return false;
+    };
+    
+    window.navigateToPreviousPage = function() {
+        return false;
+    };
+    
+    // Ajouter un style pour désactiver le swipe
+    const style = document.createElement('style');
+    style.textContent = `
+        * {
+            overscroll-behavior-x: none !important;
+        }
+        
+        body {
+            overflow-x: hidden !important;
+        }
+        
+        .page {
+            touch-action: pan-y !important;
+        }
+    `;
+    document.head.appendChild(style);
+    
+    console.log('🔒 Navigation par swipe désactivée');
+});
