@@ -1,5 +1,5 @@
 // FireCheck Pro - Application PWA de vérification sécurité incendie
-// Version optimisée avec système de vérification annuelle simplifiée
+// Version optimisée avec système de vérification annuelle simplifié
 // ==================== CONFIGURATION ====================
 const CONFIG = {
     localStorageKeys: {
@@ -672,9 +672,6 @@ async function initApp() {
         
         // Ajouter le CSS simplifié pour la vérification
         addSimpleVerificationCSS();
-        
-        // Ajouter le CSS pour la conformité
-        addConformityCSS();
         
         navigateTo(AppState.currentPage || 'clients');
         
@@ -2271,38 +2268,6 @@ function displayVerificationList() {
         const materialInfo = getMaterialInfo(material.type);
         const status = getMaterialVerificationStatus(material, currentYear);
         const isVerified = status.verified;
-
-        // Récupérer la décision explicite
-        const verification = material.verificationHistory?.find(v => v.verificationYear === currentYear);
-        const conformeExplicite = verification?.conforme;
-
-        // Déterminer l'affichage
-        let statusColor, statusText, statusIcon;
-
-        if (isVerified) {
-            if (conformeExplicite === true) {
-                // ✅ Conforme (choix explicite)
-                statusColor = 'success';
-                statusText = 'Conforme';
-                statusIcon = 'fa-check-circle';
-            } else if (conformeExplicite === false) {
-                // ❌ Non conforme (choix explicite)
-                statusColor = 'danger';
-                statusText = 'Non conforme';
-                statusIcon = 'fa-exclamation-triangle';
-            } else {
-                // ⚠️ Vérifié mais pas de choix explicite (ancien système)
-                const autoConforme = checkMaterialConformityAuto(material);
-                statusColor = autoConforme ? 'success' : 'warning';
-                statusText = autoConforme ? 'Conforme (auto)' : 'Non conforme (auto)';
-                statusIcon = autoConforme ? 'fa-check-circle' : 'fa-exclamation-triangle';
-            }
-        } else {
-            // 🔄 À vérifier
-            statusColor = 'warning';
-            statusText = 'À vérifier';
-            statusIcon = 'fa-clock';
-        }
         
         if (isVerified) verifiedCount++;
         
@@ -2313,6 +2278,11 @@ function displayVerificationList() {
         const verificationDate = status.currentVerification?.dateVerification 
             ? `<div class="verification-date"><i class="fas fa-calendar-check"></i> Vérifié le ${formatDate(status.currentVerification.dateVerification)}</div>`
             : '';
+        
+        // Couleur et texte de statut
+        const statusColor = isVerified ? 'success' : 'warning';
+        const statusText = isVerified ? 'Vérifié' : 'À vérifier';
+        const statusIcon = isVerified ? 'fa-check-circle' : 'fa-clock';
         
         return `
             <div class="compact-material-item ${materialInfo.class}" id="verif-material-${originalFullIndex}">
@@ -2479,45 +2449,29 @@ function getMaterialVerificationStatus(material, currentYear) {
     };
 }
 
-// ==================== NOUVELLE FONCTION updateMaterialVerification AVEC CONFORMITÉ ====================
-function updateMaterialVerification(material, currentYear, verified = true, conforme = null, nonConformiteRaisons = []) {
+function updateMaterialVerification(material, currentYear, verified = true) {
     if (!material.verificationHistory) {
         material.verificationHistory = [];
     }
     
     let currentYearVerification = material.verificationHistory.find(v => v.verificationYear === currentYear);
-    
     if (!currentYearVerification) {
         currentYearVerification = {
             verified: verified,
-            conforme: conforme,
             verificationYear: currentYear,
             dateVerification: verified ? new Date().toISOString().split('T')[0] : null,
-            verifiedBy: verified ? (getElementValue('technician-name') || 'Technicien') : '',
-            nonConformiteRaisons: nonConformiteRaisons
+            verifiedBy: verified ? (getElementValue('technician-name') || 'Technicien') : ''
         };
         material.verificationHistory.push(currentYearVerification);
     } else {
         currentYearVerification.verified = verified;
-        if (conforme !== null) {
-            currentYearVerification.conforme = conforme;
-        }
         currentYearVerification.dateVerification = verified ? new Date().toISOString().split('T')[0] : null;
         currentYearVerification.verifiedBy = verified ? (getElementValue('technician-name') || 'Technicien') : '';
-        
-        if (nonConformiteRaisons.length > 0) {
-            currentYearVerification.nonConformiteRaisons = nonConformiteRaisons;
-        }
-        
-        if (conforme === true) {
-            currentYearVerification.nonConformiteRaisons = [];
-        }
     }
     
     return currentYearVerification;
 }
 
-// ==================== NOUVELLE FONCTION verifyMaterial AVEC DÉCISION DE CONFORMITÉ ====================
 function verifyMaterial(index) {
     if (!AppState.currentClient || !AppState.currentClient.materials || !AppState.currentClient.materials[index]) {
         showError("Matériel non trouvé");
@@ -2528,150 +2482,22 @@ function verifyMaterial(index) {
     const material = AppState.currentClient.materials[index];
     const materialInfo = getMaterialInfo(material.type);
     
-    // Vérification automatique pour information
-    const autoConforme = checkMaterialConformityAuto(material);
-    const autoSuggestion = autoConforme ? "CONFORME" : "NON CONFORME";
-    
-    // Demander explicitement la conformité
-    const decision = confirm(`DÉCISION DE CONFORMITÉ
-
-Matériel : ${materialInfo.text} ${material.id || material.numero}
-Localisation : ${material.localisation || material.location}
-
-Suggestion système : ${autoSuggestion}
-
-✅ Cliquez sur "OK" pour marquer comme CONFORME
-❌ Cliquez sur "Annuler" pour marquer comme NON CONFORME
-
-Le technicien a toujours le dernier mot sur la conformité.`);
-    
-    if (decision) {
-        // CONFORME
-        updateMaterialVerification(material, currentYear, true, true, []);
-        showSuccess(`${materialInfo.text} marqué comme CONFORME par le technicien`);
-    } else {
-        // NON CONFORME - Demander les raisons
-        const raisonsText = prompt(`RAISONS DE NON-CONFORMITÉ
-
-Pour le ${materialInfo.text.toLowerCase()} ${material.id || material.numero}, veuillez indiquer les raisons (séparées par des virgules) :
-
-Exemples :
-- Joints usés
-- Pression insuffisante
-- Accessibilité limitée
-- Panneau illisible
-- Âge dépassé (${material.annee ? new Date().getFullYear() - parseInt(material.annee) + ' ans' : 'âge non renseigné'})`, "");
-        
-        let raisons = [];
-        if (raisonsText && raisonsText.trim() !== '') {
-            raisons = raisonsText.split(',').map(r => r.trim()).filter(r => r !== '');
-        } else {
-            raisons = ["Non conforme (sans détail)"];
-        }
-        
-        updateMaterialVerification(material, currentYear, true, false, raisons);
-        showWarning(`${materialInfo.text} marqué comme NON CONFORME : ${raisons.join(', ')}`);
+    if (!confirm(`Voulez-vous vraiment valider le ${materialInfo.text.toLowerCase()} ${material.id || material.numero} pour l'année ${currentYear} ?`)) {
+        return;
     }
+    
+    updateMaterialVerification(material, currentYear, true);
     
     // Mettre à jour l'année de dernière vérification du client
     AppState.currentClient.lastVerificationYear = currentYear;
     
     saveCurrentClientChanges();
     refreshAllLists();
+    
+    showSuccess(`${materialInfo.text} validé pour l'année ${currentYear}`);
+    
+    // Mettre à jour le bouton de fin de vérification
     updateFinishButton();
-}
-
-// ==================== NOUVELLE FONCTION checkMaterialConformity AVEC PRIORITÉ AU CHOIX EXPLICITE ====================
-function checkMaterialConformity(material, verificationYear) {
-    if (!material.verificationHistory) return false;
-    
-    const yearVerification = material.verificationHistory.find(v => v.verificationYear === verificationYear);
-    
-    if (!yearVerification || !yearVerification.verified) {
-        return false;
-    }
-    
-    // PRIORITÉ AU CHOIX EXPLICITE DU TECHNICIEN
-    if (yearVerification.conforme !== undefined && yearVerification.conforme !== null) {
-        return yearVerification.conforme === true;
-    }
-    
-    // FALLBACK : Calcul automatique (ancien système)
-    console.log(`Aucun choix explicite pour ${material.id}, calcul automatique`);
-    return checkMaterialConformityAuto(material);
-}
-
-// ==================== NOUVELLE FONCTION checkMaterialConformityAuto POUR LE FALLBACK ====================
-function checkMaterialConformityAuto(material) {
-    switch(material.type) {
-        case 'extincteur':
-            // Logique existante de checkExtincteurConformity
-            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-                return false;
-            }
-            
-            if (material.annee) {
-                const currentYear = new Date().getFullYear();
-                const age = currentYear - parseInt(material.annee);
-                if (age >= 10) {
-                    return false;
-                }
-            }
-            
-            const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite'];
-            for (const field of verificationFields) {
-                if (material[field] === 'Non OK') {
-                    return false;
-                }
-            }
-            
-            return true;
-            
-        case 'ria':
-            // Logique existante de checkRIAConformity
-            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-                return false;
-            }
-            
-            const riaFields = ['etatGeneral', 'lisibilite', 'panneau', 'accessibilite'];
-            for (const field of riaFields) {
-                if (material[field] === 'Non OK') {
-                    return false;
-                }
-            }
-            
-            return true;
-            
-        case 'baes':
-            // Logique existante de checkBAESConformity
-            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-                return false;
-            }
-            
-            const baesFields = ['etatGeneral', 'fonctionnement', 'chargeur', 'accessibilite'];
-            for (const field of baesFields) {
-                if (material[field] === 'Non OK') {
-                    return false;
-                }
-            }
-            
-            return true;
-            
-        case 'alarme':
-            // Logique existante de checkAlarmeConformity
-            if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-                return false;
-            }
-            
-            if (!material.batterie || !material.fonctionnement || !material.accessibilite) {
-                return false;
-            }
-            
-            return true;
-            
-        default:
-            return true;
-    }
 }
 
 function resetMaterialVerification(index) {
@@ -3855,10 +3681,6 @@ function showError(message) {
     showToast(message, 'error');
 }
 
-function showWarning(message) {
-    showToast(message, 'error'); // On utilise 'error' pour les avertissements aussi
-}
-
 function closeSuccessModal() {
     const modal = document.getElementById('success-modal');
     if (modal) {
@@ -4467,37 +4289,6 @@ function addDataManagementCSS() {
         }
     `;
     document.head.appendChild(style);
-}
-
-// ==================== CSS POUR LA CONFORMITÉ ====================
-function addConformityCSS() {
-    const style = document.createElement('style');
-    style.textContent = `
-        .status-danger {
-            color: #dc3545;
-            background: rgba(220, 53, 69, 0.1);
-            padding: 3px 10px;
-            border-radius: 4px;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            border: 1px solid rgba(220, 53, 69, 0.2);
-        }
-        
-        .status-danger i {
-            color: #dc3545;
-        }
-        
-        .material-status.status-danger {
-            color: #dc3545;
-        }
-    `;
-    
-    if (!document.getElementById('conformity-css')) {
-        style.id = 'conformity-css';
-        document.head.appendChild(style);
-    }
 }
 
 // ==================== FONCTIONS D'UTILITÉ SUPPLÉMENTAIRES ====================
@@ -6037,6 +5828,98 @@ function refreshAllLists() {
     }
 }
 
+// ==================== VÉRIFICATION DE CONFORMITÉ ====================
+function checkMaterialConformity(material, verificationYear) {
+    if (!material.verificationHistory) return false;
+    
+    const yearVerification = material.verificationHistory.find(v => v.verificationYear === verificationYear);
+    if (!yearVerification || !yearVerification.verified) {
+        return false;
+    }
+    
+    // Vérifications spécifiques par type
+    switch(material.type) {
+        case 'extincteur':
+            return checkExtincteurConformity(material);
+        case 'ria':
+            return checkRIAConformity(material);
+        case 'baes':
+            return checkBAESConformity(material);
+        case 'alarme':
+            return checkAlarmeConformity(material);
+        default:
+            return true;
+    }
+}
+
+function checkExtincteurConformity(material) {
+    // Vérifier l'âge
+    if (material.annee) {
+        const currentYear = new Date().getFullYear();
+        const age = currentYear - parseInt(material.annee);
+        if (age >= 10) {
+            return false;
+        }
+    }
+    
+    // Vérifier les observations
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    // Vérifier les champs OK/NOK
+    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite'];
+    for (const field of verificationFields) {
+        if (material[field] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function checkRIAConformity(material) {
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'accessibilite'];
+    for (const field of verificationFields) {
+        if (material[field] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function checkBAESConformity(material) {
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    const verificationFields = ['etatGeneral', 'fonctionnement', 'chargeur', 'accessibilite'];
+    for (const field of verificationFields) {
+        if (material[field] === 'Non OK') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function checkAlarmeConformity(material) {
+    if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
+        return false;
+    }
+    
+    if (!material.batterie || !material.fonctionnement || !material.accessibilite) {
+        return false;
+    }
+    
+    return true;
+}
+
 // ==================== FONCTIONS D'EXTINCTEUR ====================
 function resetExtincteurForm() {
     const today = new Date().toISOString().split('T')[0];
@@ -6940,50 +6823,709 @@ document.addEventListener('DOMContentLoaded', function() {
 
 console.log("✅ Système 'Terminer la vérification' chargé avec gestion des filtres");
 
-function goToVerification() {
-    // Changer d'onglet vers la vérification
-    const verificationTab = document.querySelector('.nav-tab[data-page="verification"]');
-    if (verificationTab) {
-        verificationTab.click();
+
+// ==================== SOLUTION AVEC ID UNIQUES POUR VÉRIFICATION ====================
+function displayVerificationList() {
+    const verificationList = document.getElementById('verification-list');
+    const verificationSearch = document.getElementById('verification-search');
+    
+    if (!verificationList) return;
+    
+    updateClientInfoBadge();
+    
+    if (!AppState.currentClient || !AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
+        showEmptyState(verificationList, 'verification');
+        updateVerificationStats(0, 0, 0);
+        updateFilterCounts();
+        updateCompleteButton();
+        return;
+    }
+    
+    const searchTerm = verificationSearch ? verificationSearch.value.toLowerCase() : '';
+    const filteredMaterials = getFilteredMaterials(searchTerm);
+    
+    if (filteredMaterials.length === 0) {
+        showEmptyState(verificationList, 'verification');
+        updateVerificationStats(0, 0, 0);
+        updateFilterCounts();
+        updateCompleteButton();
+        return;
+    }
+    
+    const currentYear = new Date().getFullYear();
+    let verifiedCount = 0;
+    
+    verificationList.innerHTML = filteredMaterials.map((material, filteredIndex) => {
+        const materialInfo = getMaterialInfo(material.type);
+        const status = getMaterialVerificationStatus(material, currentYear);
+        const isVerified = status.verified;
+        
+        if (isVerified) verifiedCount++;
+        
+        // Créer un ID unique basé sur les propriétés du matériel
+        const materialUniqueId = generateMaterialUniqueId(material, filteredIndex);
+        
+        const location = material.localisation || material.location || 'Non spécifié';
+        const type = material.typeExtincteur || material.typeRIA || material.typeBAES || material.typeAlarme || 'Type non spécifié';
+        const annee = material.annee ? ` • Année: ${material.annee}` : '';
+        const verificationDate = status.currentVerification?.dateVerification 
+            ? `<div class="verification-date"><i class="fas fa-calendar-check"></i> Vérifié le ${formatDate(status.currentVerification.dateVerification)}</div>`
+            : '';
+        
+        const statusColor = isVerified ? 'success' : 'warning';
+        const statusText = isVerified ? 'Vérifié' : 'À vérifier';
+        const statusIcon = isVerified ? 'fa-check-circle' : 'fa-clock';
+        
+        return `
+            <div class="compact-material-item ${materialInfo.class}" data-unique-id="${materialUniqueId}">
+                <div class="compact-material-info">
+                    <div class="compact-material-header">
+                        <i class="fas ${materialInfo.icon}"></i>
+                        <strong>${material.id || material.numero}</strong>
+                        <span class="material-family-badge">${materialInfo.text}</span>
+                        <span class="material-status status-${statusColor}">
+                            <i class="fas ${statusIcon}"></i> ${statusText}
+                        </span>
+                    </div>
+                    <div class="compact-material-details">
+                        <div><i class="fas fa-map-marker-alt"></i> ${location}</div>
+                        <div><i class="fas fa-tag"></i> ${type}${annee}</div>
+                        ${verificationDate}
+                    </div>
+                </div>
+                <div class="compact-material-actions">
+                    <div class="action-buttons">
+                        <button class="btn btn-sm btn-edit" onclick="handleEditMaterial('${materialUniqueId}')" 
+                                title="Modifier le matériel">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        
+                        <button class="btn btn-sm ${isVerified ? 'btn-validated' : 'btn-validate'}" 
+                                onclick="handleVerifyMaterial('${materialUniqueId}', ${isVerified})" 
+                                title="${isVerified ? 'Annuler la validation' : 'Valider le matériel'}">
+                            <i class="fas ${isVerified ? 'fa-undo' : 'fa-check'}"></i>
+                        </button>
+                        
+                        <button class="btn btn-sm btn-delete" onclick="handleRemoveFromVerification('${materialUniqueId}')" 
+                                title="Retirer de la vérification">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    const pendingCount = filteredMaterials.length - verifiedCount;
+    updateVerificationStats(filteredMaterials.length, verifiedCount, pendingCount);
+    updateFilterCounts();
+    updateCompleteButton();
+}
+
+// ==================== FONCTIONS D'AIDE POUR ID UNIQUES ====================
+function generateMaterialUniqueId(material, filteredIndex) {
+    // Créer un ID unique basé sur les propriétés du matériel
+    const baseId = material.id || material.numero || `mat_${filteredIndex}`;
+    const type = material.type || 'unknown';
+    const location = material.localisation || material.location || 'unknown';
+    
+    // Combiner pour créer un ID vraiment unique
+    return `${type}_${baseId}_${location}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function findMaterialByUniqueId(uniqueId) {
+    if (!AppState.currentClient?.materials) return { material: null, index: -1 };
+    
+    const allMaterials = AppState.currentClient.materials;
+    
+    // Extraire l'ID de base de l'ID unique
+    const baseIdMatch = uniqueId.match(/^(extincteur|ria|baes|alarme)_(.+?)_.+$/);
+    if (baseIdMatch) {
+        const [, type, baseId] = baseIdMatch;
+        
+        // Chercher d'abord par ID complet (pour les nouveaux matériels)
+        for (let i = 0; i < allMaterials.length; i++) {
+            const material = allMaterials[i];
+            const materialUniqueId = generateMaterialUniqueId(material, i);
+            if (materialUniqueId === uniqueId) {
+                return { material, index: i };
+            }
+        }
+        
+        // Sinon, chercher par ID de base
+        for (let i = 0; i < allMaterials.length; i++) {
+            const material = allMaterials[i];
+            if (material.type === type) {
+                const materialBaseId = material.id || material.numero;
+                if (materialBaseId && materialBaseId.toString() === baseId.toString()) {
+                    return { material, index: i };
+                }
+            }
+        }
+    }
+    
+    // Fallback : chercher dans tous les matériels filtrés
+    const filteredMaterials = getFilteredMaterials();
+    for (let i = 0; i < filteredMaterials.length; i++) {
+        const material = filteredMaterials[i];
+        const materialUniqueId = generateMaterialUniqueId(material, i);
+        if (materialUniqueId === uniqueId) {
+            // Trouver l'index réel
+            const realIndex = AppState.currentClient.materials.findIndex(m => 
+                m === material || 
+                (m.id && material.id && m.id === material.id) ||
+                (m.numero && material.numero && m.numero === material.numero)
+            );
+            if (realIndex !== -1) {
+                return { material, index: realIndex };
+            }
+        }
+    }
+    
+    return { material: null, index: -1 };
+}
+
+// ==================== GESTIONNAIRES D'ÉVÉNEMENTS AVEC ID UNIQUES ====================
+function handleEditMaterial(uniqueId) {
+    console.log("✏️ Édition avec ID unique:", uniqueId);
+    
+    const { material, index } = findMaterialByUniqueId(uniqueId);
+    if (material && index !== -1) {
+        editMaterial(index);
+    } else {
+        showError("Matériel non trouvé pour édition");
+        console.error("Matériel non trouvé, ID unique:", uniqueId);
     }
 }
 
-// ==================== DÉSACTIVATION RAPIDE DU SWIPE ====================
+function handleVerifyMaterial(uniqueId, isCurrentlyVerified) {
+    console.log(`✅ Validation avec ID unique: ${uniqueId}, Actuellement vérifié: ${isCurrentlyVerified}`);
+    
+    const { material, index } = findMaterialByUniqueId(uniqueId);
+    if (material && index !== -1) {
+        if (isCurrentlyVerified) {
+            resetMaterialVerification(index);
+        } else {
+            verifyMaterial(index);
+        }
+    } else {
+        showError("Matériel non trouvé pour validation");
+        console.error("Matériel non trouvé, ID unique:", uniqueId);
+    }
+}
+
+function handleRemoveFromVerification(uniqueId) {
+    console.log("🗑️ Suppression avec ID unique:", uniqueId);
+    
+    const { material, index } = findMaterialByUniqueId(uniqueId);
+    if (material && index !== -1) {
+        removeFromVerification(index);
+    } else {
+        showError("Matériel non trouvé pour suppression");
+        console.error("Matériel non trouvé, ID unique:", uniqueId);
+    }
+}
+
+// ==================== FONCTIONS DE DÉBOGAGE ====================
+function debugMaterials() {
+    if (!AppState.currentClient) {
+        console.log("❌ Aucun client sélectionné");
+        return;
+    }
+    
+    console.log("=== DÉBOGAGE MATÉRIELS ===");
+    console.log("Client:", AppState.currentClient.name);
+    console.log("Nombre total de matériels:", AppState.currentClient.materials?.length || 0);
+    
+    if (AppState.currentClient.materials) {
+        AppState.currentClient.materials.forEach((material, index) => {
+            console.log(`[${index}] ID: ${material.id || material.numero}, Type: ${material.type}, Localisation: ${material.localisation || material.location}`);
+        });
+    }
+    
+    const filteredMaterials = getFilteredMaterials();
+    console.log("Matériels filtrés:", filteredMaterials.length);
+    filteredMaterials.forEach((material, index) => {
+        console.log(`Filtré [${index}] ID: ${material.id || material.numero}, Type: ${material.type}`);
+    });
+}
+
+// ==================== SURCHARGE DES FONCTIONS EXISTANTES ====================
+// Remplace la fonction displayVerificationList existante
+window.displayVerificationList = displayVerificationList;
+
+// Ajoute les nouvelles fonctions au scope global
+window.handleEditMaterial = handleEditMaterial;
+window.handleVerifyMaterial = handleVerifyMaterial;
+window.handleRemoveFromVerification = handleRemoveFromVerification;
+window.debugMaterials = debugMaterials;
+
+// ==================== TEST AUTOMATIQUE ====================
+function testMaterialSelection() {
+    console.log("🧪 Test de sélection de matériels...");
+    
+    if (!AppState.currentClient?.materials?.length) {
+        console.log("❌ Aucun matériel à tester");
+        return;
+    }
+    
+    // Créer des IDs uniques pour chaque matériel
+    AppState.currentClient.materials.forEach((material, index) => {
+        const uniqueId = generateMaterialUniqueId(material, index);
+        const found = findMaterialByUniqueId(uniqueId);
+        
+        if (found.material && found.index === index) {
+            console.log(`✅ Matériel ${index} correctement identifié: ${material.id || material.numero}`);
+        } else {
+            console.log(`❌ Problème avec matériel ${index}: ${material.id || material.numero}`);
+        }
+    });
+    
+    console.log("🧪 Test terminé");
+}
+
+// Exécuter le test au chargement
+setTimeout(() => {
+    if (AppState.currentClient?.materials?.length > 0) {
+        testMaterialSelection();
+    }
+}, 2000);
+
+console.log('🎉 Système d\'ID uniques pour matériels initialisé !');
+
+// ==================== CORRECTION DES BOUTONS AJOUTER ====================
+
+// Initialisation des boutons d'ajout de matériel
+function initMaterialAddButtons() {
+    console.log("🔧 Initialisation des boutons d'ajout de matériel...");
+    
+    // Bouton RIA
+    const addRiaBtn = document.querySelector('[onclick*="openAddRIAModal"]');
+    if (addRiaBtn) {
+        console.log("✅ Bouton RIA trouvé, réassignation...");
+        addRiaBtn.onclick = function() {
+            console.log("🔄 Clic sur Ajouter RIA");
+            openAddRIAModal();
+        };
+    }
+    
+    // Bouton BAES
+    const addBaesBtn = document.querySelector('[onclick*="openAddBAESModal"]');
+    if (addBaesBtn) {
+        console.log("✅ Bouton BAES trouvé, réassignation...");
+        addBaesBtn.onclick = function() {
+            console.log("🔄 Clic sur Ajouter BAES");
+            openAddBAESModal();
+        };
+    }
+    
+    // Bouton Alarme
+    const addAlarmeBtn = document.querySelector('[onclick*="openAddAlarmeModal"]');
+    if (addAlarmeBtn) {
+        console.log("✅ Bouton Alarme trouvé, réassignation...");
+        addAlarmeBtn.onclick = function() {
+            console.log("🔄 Clic sur Ajouter Alarme");
+            openAddAlarmeModal();
+        };
+    }
+    
+    // Bouton Extincteur (pour vérification)
+    const addExtincteurBtn = document.querySelector('[onclick*="openAddExtincteurModal"]');
+    if (addExtincteurBtn) {
+        console.log("✅ Bouton Extincteur trouvé, réassignation...");
+        addExtincteurBtn.onclick = function() {
+            console.log("🔄 Clic sur Ajouter Extincteur");
+            openAddExtincteurModal();
+        };
+    }
+}
+
+// Réinitialisation des formulaires avec confirmation
+function openAddRIAModal() {
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    console.log("📝 Ouverture modal RIA");
+    AppState.currentEditingMaterialIndex = -1;
+    resetRIAForm();
+    
+    const modal = document.getElementById('add-ria-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Réassigner le bouton d'ajout
+        const addButton = modal.querySelector('.btn-success');
+        if (addButton) {
+            addButton.onclick = addRIAToList;
+        }
+    } else {
+        console.error("❌ Modal RIA non trouvé");
+        showError('Erreur: formulaire RIA non disponible');
+    }
+}
+
+function openAddBAESModal() {
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    console.log("📝 Ouverture modal BAES");
+    AppState.currentEditingMaterialIndex = -1;
+    resetBAESForm();
+    
+    const modal = document.getElementById('add-baes-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Réassigner le bouton d'ajout
+        const addButton = modal.querySelector('.btn-success');
+        if (addButton) {
+            addButton.onclick = addBAESToList;
+        }
+    } else {
+        console.error("❌ Modal BAES non trouvé");
+        showError('Erreur: formulaire BAES non disponible');
+    }
+}
+
+function openAddAlarmeModal() {
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    console.log("📝 Ouverture modal Alarme");
+    AppState.currentEditingMaterialIndex = -1;
+    resetAlarmeForm();
+    
+    const modal = document.getElementById('add-alarme-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Réassigner le bouton d'ajout
+        const addButton = modal.querySelector('.btn-success');
+        if (addButton) {
+            addButton.onclick = addAlarmeToList;
+        }
+    } else {
+        console.error("❌ Modal Alarme non trouvé");
+        showError('Erreur: formulaire Alarme non disponible');
+    }
+}
+
+function openAddExtincteurModal() {
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    console.log("📝 Ouverture modal Extincteur");
+    AppState.currentEditingMaterialIndex = -1;
+    resetExtincteurForm();
+    
+    const modal = document.getElementById('add-extincteur-modal');
+    if (modal) {
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Réassigner le bouton d'ajout
+        const addButton = modal.querySelector('.btn-success');
+        if (addButton) {
+            addButton.onclick = addExtincteurToList;
+        }
+    } else {
+        console.error("❌ Modal Extincteur non trouvé");
+        showError('Erreur: formulaire Extincteur non disponible');
+    }
+}
+
+// Fonctions de fermeture améliorées
+function closeRIAModal() {
+    const modal = document.getElementById('add-ria-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+        console.log("✅ Modal RIA fermé");
+    }
+}
+
+function closeBAESModal() {
+    const modal = document.getElementById('add-baes-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+        console.log("✅ Modal BAES fermé");
+    }
+}
+
+function closeAlarmeModal() {
+    const modal = document.getElementById('add-alarme-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+        console.log("✅ Modal Alarme fermé");
+    }
+}
+
+function closeExtincteurModal() {
+    const modal = document.getElementById('add-extincteur-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+        console.log("✅ Modal Extincteur fermé");
+    }
+}
+
+// Ajouter RIA à la liste
+function addRIAToList() {
+    console.log("🔄 Tentative d'ajout RIA");
+    
+    if (!validateMaterialForm('ria')) {
+        console.log("❌ Validation RIA échouée");
+        return;
+    }
+    
+    const ria = createRIAObject();
+    console.log("✅ Objet RIA créé:", ria);
+    
+    addMaterialToList(ria);
+    closeRIAModal();
+    showSuccess('RIA ajouté avec succès');
+    
+    // Rafraîchir l'affichage
+    if (AppState.currentPage === 'materials') {
+        displayMaterialsListSimplified();
+    }
+    if (AppState.currentPage === 'verification') {
+        displayVerificationList();
+    }
+}
+
+// Ajouter BAES à la liste
+function addBAESToList() {
+    console.log("🔄 Tentative d'ajout BAES");
+    
+    if (!validateMaterialForm('baes')) {
+        console.log("❌ Validation BAES échouée");
+        return;
+    }
+    
+    const baes = createBAESObject();
+    console.log("✅ Objet BAES créé:", baes);
+    
+    addMaterialToList(baes);
+    closeBAESModal();
+    showSuccess('BAES ajouté avec succès');
+    
+    // Rafraîchir l'affichage
+    if (AppState.currentPage === 'materials') {
+        displayMaterialsListSimplified();
+    }
+    if (AppState.currentPage === 'verification') {
+        displayVerificationList();
+    }
+}
+
+// Ajouter Alarme à la liste
+function addAlarmeToList() {
+    console.log("🔄 Tentative d'ajout Alarme");
+    
+    if (!validateMaterialForm('alarme')) {
+        console.log("❌ Validation Alarme échouée");
+        return;
+    }
+    
+    const alarme = createAlarmeObject();
+    console.log("✅ Objet Alarme créé:", alarme);
+    
+    addMaterialToList(alarme);
+    closeAlarmeModal();
+    showSuccess('Alarme ajoutée avec succès');
+    
+    // Rafraîchir l'affichage
+    if (AppState.currentPage === 'materials') {
+        displayMaterialsListSimplified();
+    }
+    if (AppState.currentPage === 'verification') {
+        displayVerificationList();
+    }
+}
+
+// Ajouter Extincteur à la liste
+function addExtincteurToList() {
+    console.log("🔄 Tentative d'ajout Extincteur");
+    
+    if (!validateMaterialForm('extincteur')) {
+        console.log("❌ Validation Extincteur échouée");
+        return;
+    }
+    
+    const extincteur = createExtincteurObject();
+    console.log("✅ Objet Extincteur créé:", extincteur);
+    
+    addMaterialToList(extincteur);
+    closeExtincteurModal();
+    showSuccess('Extincteur ajouté avec succès');
+    
+    // Rafraîchir l'affichage
+    if (AppState.currentPage === 'materials') {
+        displayMaterialsListSimplified();
+    }
+    if (AppState.currentPage === 'verification') {
+        displayVerificationList();
+    }
+}
+
+// Fonction pour ouvrir le modal de matériel générique
+function openMaterialModal(type) {
+    console.log("📝 Ouverture modal pour type:", type);
+    
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    AppState.currentEditingMaterialIndex = -1;
+    
+    switch(type) {
+        case 'extincteur':
+            resetExtincteurForm();
+            openAddExtincteurModal();
+            break;
+        case 'ria':
+            resetRIAForm();
+            openAddRIAModal();
+            break;
+        case 'baes':
+            resetBAESForm();
+            openAddBAESModal();
+            break;
+        case 'alarme':
+            resetAlarmeForm();
+            openAddAlarmeModal();
+            break;
+        default:
+            showError('Type de matériel non reconnu');
+    }
+}
+
+// Réassigner la fonction openMaterialModal existante
+window.openMaterialModal = openMaterialModal;
+
+// Initialiser au démarrage et après chaque navigation
+function initMaterialButtonsOnNavigation() {
+    // Initialiser les boutons d'ajout
+    initMaterialAddButtons();
+    
+    // Réassigner les événements de fermeture
+    const closeButtons = document.querySelectorAll('[onclick*="closeModal"]');
+    closeButtons.forEach(btn => {
+        const onclick = btn.getAttribute('onclick');
+        if (onclick) {
+            if (onclick.includes('add-ria-modal')) {
+                btn.onclick = closeRIAModal;
+            } else if (onclick.includes('add-baes-modal')) {
+                btn.onclick = closeBAESModal;
+            } else if (onclick.includes('add-alarme-modal')) {
+                btn.onclick = closeAlarmeModal;
+            } else if (onclick.includes('add-extincteur-modal')) {
+                btn.onclick = closeExtincteurModal;
+            }
+        }
+    });
+    
+    // Réassigner les boutons dans les modals
+    setTimeout(() => {
+        // Modal RIA
+        const addRiaModalBtn = document.querySelector('#add-ria-modal .btn-success');
+        if (addRiaModalBtn) {
+            addRiaModalBtn.onclick = addRIAToList;
+        }
+        
+        // Modal BAES
+        const addBaesModalBtn = document.querySelector('#add-baes-modal .btn-success');
+        if (addBaesModalBtn) {
+            addBaesModalBtn.onclick = addBAESToList;
+        }
+        
+        // Modal Alarme
+        const addAlarmeModalBtn = document.querySelector('#add-alarme-modal .btn-success');
+        if (addAlarmeModalBtn) {
+            addAlarmeModalBtn.onclick = addAlarmeToList;
+        }
+        
+        // Modal Extincteur
+        const addExtincteurModalBtn = document.querySelector('#add-extincteur-modal .btn-success');
+        if (addExtincteurModalBtn) {
+            addExtincteurModalBtn.onclick = addExtincteurToList;
+        }
+    }, 500);
+}
+
+// Initialiser au chargement
 document.addEventListener('DOMContentLoaded', function() {
-    // Supprimer tous les écouteurs de swipe existants
-    document.removeEventListener('touchstart', initSwipeNavigation);
-    document.removeEventListener('touchend', initSwipeNavigation);
+    setTimeout(initMaterialAddButtons, 1000);
     
-    // Désactiver la fonction de swipe
-    window.handleSwipeGesture = function() {
-        return false;
-    };
-    
-    // Désactiver la navigation par swipe
-    window.navigateToNextPage = function() {
-        return false;
-    };
-    
-    window.navigateToPreviousPage = function() {
-        return false;
-    };
-    
-    // Ajouter un style pour désactiver le swipe
-    const style = document.createElement('style');
-    style.textContent = `
-        * {
-            overscroll-behavior-x: none !important;
-        }
-        
-        body {
-            overflow-x: hidden !important;
-        }
-        
-        .page {
-            touch-action: pan-y !important;
-        }
-    `;
-    document.head.appendChild(style);
-    
-    console.log('🔒 Navigation par swipe désactivée');
+    // Surveiller les changements de page
+    const originalNavigate = window.navigateTo;
+    if (originalNavigate) {
+        window.navigateTo = function(page) {
+            originalNavigate(page);
+            
+            // Si on navigue vers la page des matériels, initialiser les boutons
+            if (page === 'materials') {
+                setTimeout(initMaterialButtonsOnNavigation, 300);
+            }
+        };
+    }
 });
+
+// Exposer les fonctions globalement
+window.openAddRIAModal = openAddRIAModal;
+window.openAddBAESModal = openAddBAESModal;
+window.openAddAlarmeModal = openAddAlarmeModal;
+window.openAddExtincteurModal = openAddExtincteurModal;
+window.addRIAToList = addRIAToList;
+window.addBAESToList = addBAESToList;
+window.addAlarmeToList = addAlarmeToList;
+window.addExtincteurToList = addExtincteurToList;
+window.closeRIAModal = closeRIAModal;
+window.closeBAESModal = closeBAESModal;
+window.closeAlarmeModal = closeAlarmeModal;
+window.closeExtincteurModal = closeExtincteurModal;
+
+console.log('✅ Correction des boutons d\'ajout de matériel chargée !');
+
+// Fonction minimale pour corriger l'erreur
+window.selectAlarmeNok = function(element, field) {
+    // Retirer la classe 'selected' de tous les boutons dans ce groupe
+    const parent = element.parentElement;
+    const allOptions = parent.querySelectorAll('.ok-nok-option');
+    allOptions.forEach(opt => opt.classList.remove('selected'));
+    
+    // Ajouter la classe 'selected' au bouton cliqué
+    element.classList.add('selected');
+    
+    // Déterminer la valeur
+    let value = '';
+    if (element.classList.contains('ok')) {
+        value = 'OK';
+    } else if (element.classList.contains('nok')) {
+        value = 'Non OK';
+    } else if (element.classList.contains('nc')) {
+        value = 'NC';
+    }
+    
+    // Mettre à jour le champ caché correspondant
+    const hiddenField = document.getElementById(`alarme-${field}`);
+    if (hiddenField) {
+        hiddenField.value = value;
+    }
+};
+
