@@ -5853,30 +5853,25 @@ function checkMaterialConformity(material, verificationYear) {
 }
 
 function checkExtincteurConformity(material) {
-    // Vérifier l'âge
-    if (material.annee) {
-        const currentYear = new Date().getFullYear();
-        const age = currentYear - parseInt(material.annee);
-        if (age >= 10) {
-            return false;
-        }
-    }
-    
-    // Vérifier les observations
+    // Vérifier les observations - SEUL CRITÈRE FORT
     if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
-        return false;
+        return false; // NON CONFORME
     }
     
-    // Vérifier les champs OK/NOK
-    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'goupille', 'pression', 'joints', 'accessibilite'];
+    // Vérifier les champs OK/NOK SAUF "joints"
+    const verificationFields = ['etatGeneral', 'lisibilite', 'panneau', 'goupille', 'pression', 'accessibilite'];
     for (const field of verificationFields) {
         if (material[field] === 'Non OK') {
-            return false;
+            return false; // NON CONFORME
         }
     }
     
-    return true;
+    // Âge ≥ 10 ans → IGNORÉ (ne rend plus non conforme)
+    // joints = "Non OK" → IGNORÉ (ne rend plus non conforme)
+    
+    return true; // CONFORME
 }
+
 
 function checkRIAConformity(material) {
     if (material.observations && material.observations.toLowerCase().includes('non conforme')) {
@@ -7529,3 +7524,1274 @@ window.selectAlarmeNok = function(element, field) {
     }
 };
 
+
+// ==================== DÉSACTIVATION DU SWIPE ====================
+
+// Supprimer complètement la navigation par swipe
+function disableSwipeNavigation() {
+    console.log("📱 Désactivation de la navigation par swipe");
+    
+    // Remplacer la fonction initSwipeNavigation par une fonction vide
+    window.initSwipeNavigation = function() {
+        console.log("❌ Navigation par swipe désactivée");
+        return false;
+    };
+    
+    // Remplacer handleSwipeGesture par une fonction vide
+    window.handleSwipeGesture = function() {
+        return false;
+    };
+    
+    // Supprimer les écouteurs d'événements si existants
+    document.removeEventListener('touchstart', function() {});
+    document.removeEventListener('touchend', function() {});
+    
+    console.log("✅ Swipe désactivé avec succès");
+}
+
+// Désactiver automatiquement sur mobile
+function checkAndDisableSwipe() {
+    // Désactiver uniquement sur mobile (écran <= 768px)
+    if (window.innerWidth <= 768) {
+        disableSwipeNavigation();
+        return true;
+    }
+    return false;
+}
+
+// Écouter les changements de taille d'écran
+window.addEventListener('resize', function() {
+    checkAndDisableSwipe();
+});
+
+// Désactiver au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    // Attendre un peu que tout soit chargé
+    setTimeout(function() {
+        checkAndDisableSwipe();
+    }, 1000);
+});
+
+// Écouter quand la page est complètement chargée
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        checkAndDisableSwipe();
+    }, 500);
+});
+
+// Exposer la fonction globalement au cas où
+window.disableSwipeNavigation = disableSwipeNavigation;
+window.checkAndDisableSwipe = checkAndDisableSwipe;
+
+console.log("✅ Script de désactivation du swipe chargé");
+
+// ==================== ACTIVATION BOUTON "ALLER À LA VÉRIFICATION" ====================
+
+// Fonction principale pour naviguer vers la vérification
+function goToVerification() {
+    console.log("🔄 Navigation vers la vérification...");
+    
+    // Vérifier qu'un client est sélectionné
+    if (!AppState.currentClient) {
+        showError('Veuillez d\'abord sélectionner un client');
+        return;
+    }
+    
+    // Vérifier s'il y a des matériels
+    if (!AppState.currentClient.materials || AppState.currentClient.materials.length === 0) {
+        if (confirm('Ce client n\'a aucun matériel. Voulez-vous quand même aller à la vérification ?')) {
+            // Naviguer quand même
+            navigateTo('verification');
+            showSuccess('Page de vérification ouverte');
+        } else {
+            showInfo('Ajoutez d\'abord des matériels dans la liste');
+        }
+        return;
+    }
+    
+    // Si tout est OK, naviguer
+    navigateTo('verification');
+    showSuccess('Navigation vers la vérification réussie');
+}
+
+// Trouver et activer le bouton existant
+function activateVerificationButton() {
+    console.log("🔍 Recherche du bouton 'Aller à la vérification'...");
+    
+    // Chercher le bouton par son texte
+    const allButtons = document.querySelectorAll('button');
+    let verificationButton = null;
+    
+    allButtons.forEach(button => {
+        if (button.textContent.includes('Aller à la vérification') || 
+            button.textContent.includes('aller à la vérification') ||
+            button.textContent.includes('Vérification')) {
+            verificationButton = button;
+        }
+    });
+    
+    // Si on a trouvé le bouton
+    if (verificationButton) {
+        console.log("✅ Bouton trouvé:", verificationButton);
+        
+        // Ajouter l'événement click
+        verificationButton.onclick = goToVerification;
+        
+        // Ajouter un style pour le rendre plus visible
+        verificationButton.style.backgroundColor = '#ffc107';
+        verificationButton.style.color = '#000';
+        verificationButton.style.fontWeight = 'bold';
+        verificationButton.style.border = '2px solid #e0a800';
+        
+        // Ajouter un effet hover
+        verificationButton.addEventListener('mouseenter', function() {
+            this.style.transform = 'scale(1.05)';
+            this.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
+        });
+        
+        verificationButton.addEventListener('mouseleave', function() {
+            this.style.transform = 'scale(1)';
+            this.style.boxShadow = 'none';
+        });
+        
+        console.log("✅ Bouton activé avec succès");
+        return true;
+    } else {
+        console.log("❌ Bouton non trouvé, création d'un nouveau...");
+        
+        // Créer un nouveau bouton si non trouvé
+        createNewVerificationButton();
+        return false;
+    }
+}
+
+// Créer un nouveau bouton si nécessaire
+function createNewVerificationButton() {
+    // Chercher un endroit où ajouter le bouton
+    const materialsPage = document.getElementById('page-materials');
+    const materialsList = document.getElementById('materials-list');
+    const materialsHeader = document.querySelector('.page-header');
+    
+    let container = materialsPage || materialsList || materialsHeader;
+    
+    if (container) {
+        const button = document.createElement('button');
+        button.id = 'verification-button';
+        button.className = 'btn btn-warning';
+        button.innerHTML = '<i class="fas fa-clipboard-check"></i> Aller à la vérification';
+        button.style.margin = '15px 0';
+        button.style.padding = '10px 20px';
+        button.style.fontSize = '16px';
+        button.style.fontWeight = 'bold';
+        
+        button.onclick = goToVerification;
+        
+        // Ajouter avant la liste ou à la fin du conteneur
+        if (materialsList && materialsList.parentNode) {
+            materialsList.parentNode.insertBefore(button, materialsList);
+        } else {
+            container.appendChild(button);
+        }
+        
+        console.log("✅ Nouveau bouton créé");
+        return button;
+    }
+    
+    console.log("❌ Impossible de créer le bouton");
+    return null;
+}
+
+// Mettre à jour l'état du bouton
+function updateVerificationButton() {
+    const button = document.querySelector('#verification-button') || 
+                   document.querySelector('button[onclick*="goToVerification"]');
+    
+    if (!button) return;
+    
+    if (!AppState.currentClient) {
+        button.disabled = true;
+        button.title = 'Sélectionnez d\'abord un client';
+        button.style.opacity = '0.6';
+    } else {
+        button.disabled = false;
+        button.title = 'Cliquez pour vérifier les matériels';
+        button.style.opacity = '1';
+        
+        // Afficher le nombre de matériels
+        const count = AppState.currentClient.materials ? AppState.currentClient.materials.length : 0;
+        const icon = button.querySelector('i');
+        if (icon) {
+            button.innerHTML = `<i class="fas fa-clipboard-check"></i> Vérification (${count} matériels)`;
+        }
+    }
+}
+
+// Surveiller les changements de client
+function watchClientSelection() {
+    // Surcharger la fonction selectClient existante
+    const originalSelectClient = window.selectClient;
+    if (originalSelectClient) {
+        window.selectClient = function(client) {
+            const result = originalSelectClient(client);
+            
+            // Mettre à jour le bouton après la sélection
+            setTimeout(updateVerificationButton, 100);
+            
+            return result;
+        };
+    }
+}
+
+// Initialiser le système
+function initVerificationButtonSystem() {
+    console.log("🚀 Initialisation du système de bouton vérification");
+    
+    // Attendre que la page soit prête
+    setTimeout(() => {
+        // Activer le bouton existant
+        activateVerificationButton();
+        
+        // Surveiller les changements
+        watchClientSelection();
+        
+        // Mettre à jour l'état initial
+        updateVerificationButton();
+        
+        console.log("✅ Système de bouton vérification initialisé");
+    }, 2000);
+}
+
+// Lancer l'initialisation
+document.addEventListener('DOMContentLoaded', initVerificationButtonSystem);
+
+// Relancer quand on navigue vers la page matériels
+const originalNavigateTo = window.navigateTo;
+if (originalNavigateTo) {
+    window.navigateTo = function(page) {
+        originalNavigateTo(page);
+        
+        if (page === 'materials') {
+            setTimeout(initVerificationButtonSystem, 500);
+        }
+    };
+}
+
+// Exposer les fonctions globalement
+window.goToVerification = goToVerification;
+window.activateVerificationButton = activateVerificationButton;
+window.updateVerificationButton = updateVerificationButton;
+
+console.log("✅ Code bouton vérification chargé");
+
+
+
+
+
+
+// ==================== MODIFICATION DES CLIENTS - VERSION CORRIGÉE DÉCALAGE ====================
+
+// Variable pour suivre le client en cours de modification
+let editingClientId = null;
+
+function initClientModification() {
+    console.log("🔧 Initialisation modification clients...");
+    
+    // Ajouter le CSS immédiatement
+    addClientModificationCSS();
+    
+    // Initialiser la recherche
+    initClientSearch();
+}
+
+function displayClientsListEnhanced() {
+    const clientsList = document.getElementById('clients-list');
+    if (!clientsList) {
+        console.error("❌ Élément clients-list non trouvé");
+        return;
+    }
+    
+    const searchTerm = getElementValue('client-search')?.toLowerCase() || '';
+    const filteredClients = filterClients(searchTerm);
+    
+    if (filteredClients.length === 0) {
+        showEmptyState(clientsList, 'clients');
+        return;
+    }
+    
+    clientsList.innerHTML = filteredClients.map(client => createClientCardWithEdit(client)).join('');
+}
+
+function createClientCardWithEdit(client) {
+    const materialsCount = client.materials?.length || 0;
+    const isSelected = AppState.currentClient && AppState.currentClient.id === client.id;
+    const createdDate = client.createdDate ? formatDate(client.createdDate) : 'Non spécifiée';
+    
+    return `
+        <div class="compact-material-item client-item ${isSelected ? 'selected' : ''}" 
+             data-client-id="${client.id}"
+             onclick="selectClientById('${client.id}')">
+            <div class="compact-material-info">
+                <div class="compact-material-name">
+                    <i class="fas fa-user"></i>
+                    <span class="client-name-text">${escapeHtml(client.name)}</span>
+                    ${isSelected ? '<span class="status-badge status-ok">Sélectionné</span>' : ''}
+                </div>
+                <div class="compact-material-details">
+                    <div class="client-contact-info">
+                        <i class="fas fa-user-circle"></i> ${escapeHtml(client.contact)}
+                    </div>
+                    <div class="client-address-info">
+                        <i class="fas fa-map-marker-alt"></i> ${escapeHtml(client.address)}
+                    </div>
+                    <div class="client-contact-details">
+                        <div class="client-phone">
+                            <i class="fas fa-phone"></i> ${client.phone || 'Non renseigné'}
+                        </div>
+                        <div class="client-email">
+                            <i class="fas fa-envelope"></i> ${client.email || 'Non renseigné'}
+                        </div>
+                    </div>
+                    ${client.notes ? `
+                    <div class="client-notes-preview">
+                        <i class="fas fa-sticky-note"></i>
+                        <span>${escapeHtml(client.notes.length > 100 ? client.notes.substring(0, 100) + '...' : client.notes)}</span>
+                    </div>
+                    ` : ''}
+                    <div class="client-meta-info">
+                        <small>
+                            <i class="fas fa-clipboard-list"></i> ${materialsCount} matériel(s)
+                            <span style="margin: 0 5px">•</span>
+                            <i class="fas fa-calendar"></i> ${createdDate}
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="compact-material-actions client-actions">
+                <button class="btn btn-sm btn-primary btn-edit-client" 
+                        onclick="editClient('${client.id}', event)"
+                        title="Modifier ce client">
+                    <i class="fas fa-edit"></i>
+                    <span class="btn-text">Modifier</span>
+                </button>
+                <button class="btn btn-sm btn-danger" 
+                        onclick="deleteClient('${client.id}', event)"
+                        title="Supprimer ce client">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function selectClientById(clientId) {
+    const client = AppState.clients.find(c => c.id === clientId);
+    if (client) {
+        selectClient(client);
+    }
+}
+
+function editClient(clientId, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    
+    console.log("✏️ Modification client:", clientId);
+    
+    const client = AppState.clients.find(c => c.id === clientId);
+    if (!client) {
+        showError("Client non trouvé");
+        return;
+    }
+    
+    // Stocker l'ID du client en cours de modification
+    editingClientId = clientId;
+    
+    // Remplir le formulaire avec les données du client
+    setElementValue('client-name', client.name);
+    setElementValue('client-contact', client.contact);
+    setElementValue('client-address', client.address);
+    setElementValue('technician-name', client.technician);
+    setElementValue('client-email', client.email || '');
+    setElementValue('client-phone', client.phone || '');
+    setElementValue('client-notes', client.notes || '');
+    
+    // MODIFICATION CRITIQUE : Remplacer le bouton Créer
+    updateCreateButtonForEdit(clientId);
+    
+    // Faire défiler vers le formulaire
+    setTimeout(() => {
+        const formSection = document.querySelector('.client-form-section');
+        if (formSection) {
+            formSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }, 100);
+    
+    showToast(`Mode modification activé pour "${client.name}"`, "info", 3000);
+}
+
+// FONCTION CORRIGÉE : Trouve le bouton Créer et gère le décalage
+function updateCreateButtonForEdit(clientId) {
+    // Essayer plusieurs façons de trouver le bouton Créer
+    let createBtn = null;
+    
+    // 1. Par ID
+    createBtn = document.getElementById('create-client-btn');
+    
+    // 2. Par texte du bouton (si pas d'ID)
+    if (!createBtn) {
+        const buttons = document.querySelectorAll('button');
+        for (const btn of buttons) {
+            const btnText = btn.textContent || btn.innerText;
+            if (btnText.toLowerCase().includes('créer') && btnText.toLowerCase().includes('client')) {
+                createBtn = btn;
+                break;
+            }
+        }
+    }
+    
+    // 3. Par classe (bouton dans le formulaire client)
+    if (!createBtn) {
+        createBtn = document.querySelector('.client-form-section button.btn-success');
+    }
+    
+    // 4. Par le formulaire de création de client
+    if (!createBtn) {
+        const form = document.querySelector('form');
+        if (form) {
+            createBtn = form.querySelector('button[type="button"], button[type="submit"]');
+        }
+    }
+    
+    if (!createBtn) {
+        console.error("❌ Impossible de trouver le bouton Créer le client");
+        showError("Impossible de trouver le bouton de création. Le formulaire client est-il visible ?");
+        return;
+    }
+    
+    console.log("✅ Bouton Créer trouvé:", createBtn);
+    
+    // Donner un ID au bouton pour les prochaines fois
+    if (!createBtn.id) {
+        createBtn.id = 'create-client-btn';
+    }
+    
+    // Sauvegarder l'état original
+    if (!createBtn.dataset.originalText) {
+        createBtn.dataset.originalText = createBtn.innerHTML;
+        createBtn.dataset.originalOnclick = createBtn.getAttribute('onclick');
+        // Sauvegarder aussi les classes originales
+        createBtn.dataset.originalClasses = createBtn.className;
+    }
+    
+    // Transformer en bouton Mettre à jour
+    createBtn.innerHTML = '<i class="fas fa-save"></i> Mettre à jour le client';
+    createBtn.setAttribute('onclick', `updateExistingClient('${clientId}')`);
+    
+    // Remplacer les classes correctement
+    createBtn.className = createBtn.dataset.originalClasses.replace('btn-success', 'btn-warning');
+    
+    // S'assurer que le bouton a la classe btn
+    if (!createBtn.className.includes('btn')) {
+        createBtn.className += ' btn btn-warning';
+    }
+    
+    // Ajouter le bouton Annuler s'il n'existe pas
+    addCancelEditButton(createBtn);
+}
+
+function updateExistingClient(clientId) {
+    console.log("🔄 Mise à jour du client:", clientId);
+    
+    const formData = getClientFormData();
+    
+    if (!validateClientForm(formData)) {
+        return;
+    }
+    
+    const clientIndex = AppState.clients.findIndex(c => c.id === clientId);
+    if (clientIndex === -1) {
+        showError("Client non trouvé");
+        return;
+    }
+    
+    // Mettre à jour le client
+    const updatedClient = {
+        ...AppState.clients[clientIndex],
+        ...formData,
+        name: formData.name.trim(),
+        contact: formData.contact.trim(),
+        address: formData.address.trim(),
+        technician: formData.technician.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        notes: formData.notes.trim(),
+        updatedDate: new Date().toISOString()
+    };
+    
+    AppState.clients[clientIndex] = updatedClient;
+    
+    // Mettre à jour le client actuel si c'est le même
+    if (AppState.currentClient && AppState.currentClient.id === clientId) {
+        AppState.currentClient = JSON.parse(JSON.stringify(updatedClient));
+    }
+    
+    // Sauvegarder
+    saveClients();
+    
+    // Réinitialiser le formulaire et le bouton
+    resetCreateButtonToNormal();
+    
+    // Rafraîchir la liste
+    displayClientsListEnhanced();
+    
+    showSuccess('Client mis à jour avec succès !');
+}
+
+function resetCreateButtonToNormal() {
+    // Trouver le bouton de la même manière que updateCreateButtonForEdit
+    let createBtn = document.getElementById('create-client-btn');
+    if (!createBtn) {
+        const buttons = document.querySelectorAll('button');
+        for (const btn of buttons) {
+            const btnText = btn.textContent || btn.innerText;
+            if (btnText.includes('Mettre à jour') && (btn.classList.contains('btn-warning') || btn.classList.contains('btn-warning'))) {
+                createBtn = btn;
+                break;
+            }
+        }
+    }
+    
+    if (createBtn && createBtn.dataset.originalText) {
+        console.log("🔄 Restauration du bouton Créer");
+        
+        // Restaurer le bouton original
+        createBtn.innerHTML = createBtn.dataset.originalText;
+        
+        if (createBtn.dataset.originalOnclick) {
+            createBtn.setAttribute('onclick', createBtn.dataset.originalOnclick);
+        }
+        
+        // Restaurer les classes originales
+        if (createBtn.dataset.originalClasses) {
+            createBtn.className = createBtn.dataset.originalClasses;
+        } else {
+            createBtn.className = createBtn.className.replace('btn-warning', 'btn-success');
+        }
+        
+        // Supprimer les données temporaires
+        delete createBtn.dataset.originalText;
+        delete createBtn.dataset.originalOnclick;
+        delete createBtn.dataset.originalClasses;
+    }
+    
+    // Réinitialiser le formulaire
+    resetClientForm();
+    
+    // Supprimer le bouton Annuler
+    removeCancelButton();
+    
+    // Réinitialiser l'ID d'édition
+    editingClientId = null;
+}
+
+function addCancelEditButton(createBtn) {
+    // Vérifier si le bouton existe déjà
+    if (document.getElementById('cancel-edit-btn')) {
+        return;
+    }
+    
+    if (!createBtn) {
+        createBtn = document.getElementById('create-client-btn') || 
+                   document.querySelector('.btn-warning') ||
+                   document.querySelector('.client-form-section button');
+    }
+    
+    if (!createBtn || !createBtn.parentNode) {
+        return;
+    }
+    
+    // Créer le bouton Annuler
+    const cancelBtn = document.createElement('button');
+    cancelBtn.id = 'cancel-edit-btn';
+    cancelBtn.className = 'btn btn-secondary cancel-edit-btn';
+    cancelBtn.innerHTML = '<i class="fas fa-times"></i> <span>Annuler</span>';
+    cancelBtn.type = 'button';
+    cancelBtn.onclick = function(e) {
+        e.preventDefault();
+        resetCreateButtonToNormal();
+        showToast("Modification annulée", "info", 2000);
+    };
+    
+    // Vérifier si le parent est un conteneur flex
+    const parent = createBtn.parentNode;
+    if (parent.classList.contains('d-flex') || parent.style.display === 'flex') {
+        // Ajouter simplement à côté
+        parent.appendChild(cancelBtn);
+    } else {
+        // Créer un conteneur flex pour les boutons
+        const container = document.createElement('div');
+        container.className = 'edit-buttons-container';
+        container.style.cssText = `
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 15px;
+        `;
+        
+        // Remplacer le bouton par le conteneur
+        parent.insertBefore(container, createBtn);
+        container.appendChild(createBtn);
+        container.appendChild(cancelBtn);
+    }
+}
+
+function removeCancelButton() {
+    const cancelBtn = document.getElementById('cancel-edit-btn');
+    if (cancelBtn && cancelBtn.parentNode) {
+        const parent = cancelBtn.parentNode;
+        
+        // Si le parent est notre conteneur spécial
+        if (parent.classList.contains('edit-buttons-container')) {
+            const createBtn = parent.querySelector('button:not(#cancel-edit-btn)');
+            if (createBtn) {
+                // Remplacer le conteneur par le bouton original
+                parent.parentNode.insertBefore(createBtn, parent);
+                parent.parentNode.removeChild(parent);
+            }
+        } else {
+            // Sinon, simplement retirer le bouton Annuler
+            parent.removeChild(cancelBtn);
+        }
+    }
+}
+
+function initClientSearch() {
+    const searchInput = document.getElementById('client-search');
+    if (searchInput) {
+        // Recherche en temps réel
+        searchInput.addEventListener('input', function() {
+            displayClientsListEnhanced();
+        });
+        
+        // Nettoyer la recherche
+        const clearBtn = searchInput.parentNode.querySelector('.search-clear');
+        if (!clearBtn) {
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'search-clear';
+            clearBtn.innerHTML = '<i class="fas fa-times"></i>';
+            clearBtn.style.cssText = `
+                position: absolute;
+                right: 40px;
+                top: 50%;
+                transform: translateY(-50%);
+                background: none;
+                border: none;
+                color: #999;
+                cursor: pointer;
+                display: none;
+            `;
+            clearBtn.onclick = function() {
+                searchInput.value = '';
+                displayClientsListEnhanced();
+                this.style.display = 'none';
+            };
+            
+            searchInput.parentNode.appendChild(clearBtn);
+            
+            // Afficher/masquer le bouton nettoyer
+            searchInput.addEventListener('input', function() {
+                clearBtn.style.display = this.value ? 'block' : 'none';
+            });
+        }
+    }
+}
+
+function filterClients(searchTerm) {
+    if (!searchTerm) return AppState.clients;
+    
+    return AppState.clients.filter(client => 
+        client.name.toLowerCase().includes(searchTerm) ||
+        (client.contact && client.contact.toLowerCase().includes(searchTerm)) ||
+        (client.address && client.address.toLowerCase().includes(searchTerm)) ||
+        (client.email && client.email.toLowerCase().includes(searchTerm)) ||
+        (client.phone && client.phone.includes(searchTerm)) ||
+        (client.notes && client.notes.toLowerCase().includes(searchTerm))
+    );
+}
+
+// CSS pour la modification clients
+function addClientModificationCSS() {
+    const styleId = 'client-modification-css';
+    if (document.getElementById(styleId)) return;
+    
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+        /* ============ TAILLE DE POLICE AUGMENTÉE ============ */
+        
+        /* Noms des clients - Police plus grosse */
+        .client-name-text {
+            font-size: 1.2rem !important; /* Augmenté */
+            font-weight: 600 !important;
+            color: #2c3e50 !important;
+        }
+        
+        /* Informations de contact - Police plus grosse */
+        .client-contact-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px; /* Augmenté */
+            color: #495057;
+            font-size: 1.05rem !important; /* Augmenté */
+        }
+        
+        /* Adresse - Police plus grosse */
+        .client-address-info {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 8px; /* Augmenté */
+            color: #6c757d;
+            font-size: 1.05rem !important; /* Augmenté */
+        }
+        
+        /* NOUVEAU : Détails de contact (téléphone, email) */
+        .client-contact-details {
+            margin: 10px 0; /* Augmenté */
+            display: flex;
+            flex-direction: column;
+            gap: 6px; /* Augmenté */
+        }
+        
+        .client-phone, .client-email {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #495057;
+            font-size: 1.05rem !important; /* Augmenté */
+            line-height: 1.4;
+        }
+        
+        /* NOUVEAU : Notes supplémentaires */
+        .client-notes-preview {
+            margin: 12px 0; /* Augmenté */
+            padding: 10px; /* Augmenté */
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            border-left: 3px solid #3498db;
+            font-size: 1.05rem !important; /* Augmenté */
+            color: #495057;
+            line-height: 1.5;
+            display: flex;
+            gap: 10px; /* Augmenté */
+            align-items: flex-start;
+        }
+        
+        .client-notes-preview i {
+            color: #3498db;
+            margin-top: 3px;
+            font-size: 1.1rem; /* Augmenté */
+        }
+        
+        /* Métadonnées - Police plus grosse */
+        .client-meta-info {
+            color: #868e96;
+            font-size: 1rem !important; /* Augmenté */
+            display: flex;
+            align-items: center;
+            gap: 10px; /* Augmenté */
+            flex-wrap: wrap;
+            margin-top: 10px; /* Augmenté */
+        }
+        
+        .client-meta-info i {
+            font-size: 1rem; /* Augmenté */
+        }
+        
+        /* ============ FIN TAILLE DE POLICE AUGMENTÉE ============ */
+        
+        /* Cartes clients améliorées */
+        .client-item {
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-left: 4px solid #3498db !important;
+            margin-bottom: 15px; /* Augmenté */
+            padding: 15px; /* Augmenté */
+        }
+        
+        .client-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(52, 152, 219, 0.15);
+        }
+        
+        .client-item.selected {
+            border-left-color: #2ecc71 !important;
+            background-color: #f8f9fa;
+        }
+        
+        /* Icônes plus grosses */
+        .client-item .fa-user, 
+        .client-item .fa-user-circle,
+        .client-item .fa-map-marker-alt,
+        .client-item .fa-phone,
+        .client-item .fa-envelope,
+        .client-item .fa-sticky-note,
+        .client-item .fa-clipboard-list,
+        .client-item .fa-calendar {
+            font-size: 1.1rem !important; /* Augmenté */
+            min-width: 20px; /* Augmenté */
+        }
+        
+        /* Actions clients */
+        .client-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px; /* Augmenté */
+            min-width: 100px; /* Augmenté */
+        }
+        
+        .btn-edit-client {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            border: none;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px; /* Augmenté */
+            padding: 8px 12px; /* Augmenté */
+            font-size: 1rem !important; /* Augmenté */
+        }
+        
+        .btn-edit-client:hover {
+            background: linear-gradient(135deg, #2980b9 0%, #1f639d 100%);
+            transform: translateY(-1px);
+        }
+        
+        /* CONTENEUR BOUTONS ÉDITION - CORRECTION DÉCALAGE */
+        .edit-buttons-container {
+            display: flex !important;
+            gap: 12px !important; /* Augmenté */
+            align-items: center !important;
+            margin-top: 20px !important; /* Augmenté */
+            width: 100% !important;
+        }
+        
+        /* BOUTON METTRE À JOUR - JAUNE */
+        .btn-warning {
+            background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%) !important;
+            border-color: #e0a800 !important;
+            color: #212529 !important;
+            font-weight: 600;
+            border: 1px solid #e0a800 !important;
+            padding: 12px 24px !important; /* Augmenté */
+            flex: 1;
+            min-width: 0;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 10px !important; /* Augmenté */
+            font-size: 1.1rem !important; /* Augmenté */
+        }
+        
+        .btn-warning:hover {
+            background: linear-gradient(135deg, #e0a800 0%, #c69500 100%) !important;
+            box-shadow: 0 4px 8px rgba(255, 193, 7, 0.3);
+        }
+        
+        /* BOUTON ANNULER - GRIS */
+        .cancel-edit-btn {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%) !important;
+            border: 1px solid #495057 !important;
+            color: white !important;
+            padding: 12px 24px !important; /* Augmenté */
+            border-radius: 6px !important;
+            font-size: 1.1rem !important; /* Augmenté */
+            transition: all 0.3s ease !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 10px !important; /* Augmenté */
+            cursor: pointer !important;
+            flex: 1 !important;
+            min-width: 0 !important;
+            text-decoration: none !important;
+            text-align: center !important;
+            height: auto !important;
+            line-height: normal !important;
+        }
+        
+        .cancel-edit-btn:hover {
+            background: linear-gradient(135deg, #495057 0%, #343a40 100%) !important;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        
+        /* ALIGNEMENT BOUTONS DANS LE FORMULAIRE */
+        .client-form-section .d-flex {
+            display: flex !important;
+            gap: 12px !important; /* Augmenté */
+            align-items: center !important;
+            flex-wrap: wrap !important;
+        }
+        
+        /* Barre de recherche améliorée */
+        .search-container {
+            position: relative;
+            margin-bottom: 20px; /* Augmenté */
+        }
+        
+        .search-input {
+            width: 100%;
+            padding: 14px 45px 14px 20px; /* Augmenté */
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1.1rem !important; /* Augmenté */
+            transition: all 0.3s ease;
+            background: white;
+        }
+        
+        .search-input:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
+        }
+        
+        .search-icon {
+            position: absolute;
+            right: 20px; /* Augmenté */
+            top: 50%;
+            transform: translateY(-50%);
+            color: #6c757d;
+            pointer-events: none;
+            font-size: 1.2rem; /* Augmenté */
+        }
+        
+        /* RESPONSIVE SMARTPHONE - CORRECTION DÉCALAGE */
+        @media (max-width: 768px) {
+            /* Cartes clients */
+            .client-item {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .client-actions {
+                flex-direction: row;
+                justify-content: flex-end;
+                width: 100%;
+                margin-top: 15px; /* Augmenté */
+                min-width: auto;
+            }
+            
+            .btn-edit-client {
+                flex: 1;
+                min-width: 0;
+                font-size: 1.05rem !important; /* Augmenté */
+            }
+            
+            .btn-edit-client .btn-text {
+                display: inline;
+                font-size: 1.05rem; /* Augmenté */
+            }
+            
+            /* BOUTONS ÉDITION SUR SMARTPHONE */
+            .edit-buttons-container {
+                flex-direction: row !important;
+                gap: 10px !important; /* Augmenté */
+                width: 100% !important;
+            }
+            
+            .client-form-section .d-flex {
+                flex-direction: column !important;
+                align-items: stretch !important;
+            }
+            
+            .btn-warning, .cancel-edit-btn {
+                width: 100% !important;
+                padding: 14px 18px !important; /* Augmenté */
+                font-size: 1.15rem !important; /* Augmenté */
+                min-height: 52px !important; /* Augmenté */
+                margin: 0 !important;
+            }
+            
+            .btn-warning i, .cancel-edit-btn i {
+                font-size: 1.2rem !important; /* Augmenté */
+            }
+            
+            /* Taille police mobile */
+            .client-name-text {
+                font-size: 1.3rem !important; /* Augmenté pour mobile */
+            }
+            
+            .client-contact-info,
+            .client-address-info,
+            .client-phone,
+            .client-email,
+            .client-notes-preview {
+                font-size: 1.1rem !important; /* Augmenté pour mobile */
+            }
+        }
+        
+        /* PETITS SMARTPHONES */
+        @media (max-width: 480px) {
+            .client-item {
+                padding: 15px; /* Augmenté */
+            }
+            
+            .client-actions {
+                gap: 8px; /* Augmenté */
+            }
+            
+            .btn-edit-client {
+                padding: 10px 12px; /* Augmenté */
+                font-size: 1.05rem !important; /* Augmenté */
+            }
+            
+            .btn-edit-client .btn-text {
+                font-size: 1.05rem; /* Augmenté */
+            }
+            
+            /* BOUTONS ÉDITION */
+            .edit-buttons-container {
+                gap: 8px !important; /* Augmenté */
+            }
+            
+            .btn-warning, .cancel-edit-btn {
+                padding: 12px 15px !important; /* Augmenté */
+                font-size: 1.1rem !important; /* Augmenté */
+                min-height: 50px !important; /* Augmenté */
+            }
+            
+            .btn-warning span, .cancel-edit-btn span {
+                font-size: 1.1rem !important; /* Augmenté */
+            }
+        }
+        
+        /* TRÈS PETITS SMARTPHONES */
+        @media (max-width: 375px) {
+            .btn-edit-client .btn-text {
+                display: none;
+            }
+            
+            .btn-edit-client {
+                min-width: 45px; /* Augmenté */
+                padding: 10px; /* Augmenté */
+            }
+            
+            .client-actions button {
+                min-width: 45px; /* Augmenté */
+                height: 45px; /* Augmenté */
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
+            .client-actions button i {
+                margin: 0;
+                font-size: 18px; /* Augmenté */
+            }
+            
+            /* BOUTONS ÉDITION */
+            .edit-buttons-container {
+                gap: 6px !important; /* Augmenté */
+            }
+            
+            .btn-warning, .cancel-edit-btn {
+                padding: 12px 10px !important; /* Augmenté */
+                font-size: 1.05rem !important; /* Augmenté */
+                min-height: 48px !important; /* Augmenté */
+            }
+            
+            /* Cacher le texte, garder seulement les icônes */
+            .btn-warning span, .cancel-edit-btn span {
+                display: none !important;
+            }
+            
+            .btn-warning i, .cancel-edit-btn i {
+                margin: 0 !important;
+                font-size: 20px !important; /* Augmenté */
+            }
+            
+            .client-meta-info {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 5px; /* Augmenté */
+            }
+        }
+        
+        /* Animation pour la modification */
+        @keyframes highlightEdit {
+            0% { background-color: rgba(52, 152, 219, 0.1); }
+            100% { background-color: transparent; }
+        }
+        
+        .client-item.editing {
+            animation: highlightEdit 2s ease;
+            border-left-color: #ffc107 !important;
+        }
+        
+        /* État vide */
+        .empty-state {
+            text-align: center;
+            padding: 50px 25px; /* Augmenté */
+            color: #6c757d;
+        }
+        
+        .empty-state i {
+            font-size: 56px; /* Augmenté */
+            color: #adb5bd;
+            margin-bottom: 20px; /* Augmenté */
+        }
+        
+        .empty-state p {
+            margin: 0;
+            font-size: 1.2rem !important; /* Augmenté */
+        }
+        
+        .empty-state-sub {
+            font-size: 1.05rem !important; /* Augmenté */
+            margin-top: 8px !important; /* Augmenté */
+            color: #868e96;
+        }
+        
+        /* iPhone specific - Évite le zoom */
+        @media (max-width: 480px) {
+            .search-input {
+                font-size: 16px !important;
+            }
+            
+            input, textarea, select {
+                font-size: 16px !important;
+            }
+        }
+        
+        /* Style pour le formulaire client */
+        .client-form-section {
+            background: #f8f9fa;
+            padding: 20px; /* Augmenté */
+            border-radius: 8px;
+            margin-bottom: 25px; /* Augmenté */
+            border: 1px solid #dee2e6;
+        }
+        
+        .client-form-section h3 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px; /* Augmenté */
+            margin-bottom: 20px; /* Augmenté */
+            font-size: 1.4rem !important; /* Augmenté */
+        }
+        
+        .form-group {
+            margin-bottom: 15px; /* Augmenté */
+        }
+        
+        .form-group label {
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 8px; /* Augmenté */
+            display: block;
+            font-size: 1.1rem !important; /* Augmenté */
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 12px; /* Augmenté */
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 1.1rem !important; /* Augmenté */
+        }
+        
+        .form-control:focus {
+            border-color: #3498db;
+            box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+            outline: none;
+        }
+        
+        /* FORCER L'ALIGNEMENT DES BOUTONS */
+        #create-client-btn, .btn-success, .btn-warning {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            vertical-align: middle !important;
+        }
+        
+        /* CORRECTION HAUTEUR BOUTONS */
+        button {
+            line-height: 1.6 !important; /* Augmenté */
+            height: auto !important;
+        }
+        
+        /* Icônes dans tout l'interface client */
+        .client-item .fas, .client-item .far {
+            font-size: 1.1rem !important; /* Augmenté */
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// ==================== INTÉGRATION AVEC VOTRE CODE EXISTANT ====================
+
+// Redéfinir la fonction displayClientsList si elle existe
+if (typeof displayClientsList === 'function') {
+    const originalDisplayClientsList = displayClientsList;
+    window.displayClientsList = function() {
+        // Essayer d'abord notre nouvelle version
+        try {
+            displayClientsListEnhanced();
+        } catch (error) {
+            console.error("Erreur affichage clients:", error);
+            // Fallback à l'original
+            originalDisplayClientsList();
+        }
+    };
+} else {
+    window.displayClientsList = displayClientsListEnhanced;
+}
+
+// Initialiser au chargement
+document.addEventListener('DOMContentLoaded', function() {
+    // Petit délai pour s'assurer que tout est chargé
+    setTimeout(() => {
+        initClientModification();
+        console.log("✅ Modification clients initialisée");
+        
+        // S'assurer que la liste est affichée
+        if (AppState.currentPage === 'clients') {
+            setTimeout(displayClientsListEnhanced, 200);
+        }
+    }, 1000);
+});
+
+// Intercepter la navigation vers la page clients
+const existingNavigateTo = window.navigateTo;
+if (existingNavigateTo) {
+    window.navigateTo = function(page) {
+        existingNavigateTo(page);
+        
+        if (page === 'clients') {
+            // Réinitialiser si on était en mode édition
+            if (editingClientId) {
+                setTimeout(resetCreateButtonToNormal, 100);
+            }
+            
+            // Rafraîchir la liste
+            setTimeout(displayClientsListEnhanced, 200);
+        }
+    };
+}
+
+// ==================== EXPOSITION DES FONCTIONS ====================
+
+// Exposer les fonctions globalement
+window.editClient = editClient;
+window.updateExistingClient = updateExistingClient;
+window.resetCreateButtonToNormal = resetCreateButtonToNormal;
+window.selectClientById = selectClientById;
+window.searchClients = function() { displayClientsListEnhanced(); };
+
+console.log("✅ Module modification clients avec toutes les informations et police augmentée !");
