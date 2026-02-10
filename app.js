@@ -3568,7 +3568,7 @@ function createHistoryItemHTML(client) {
             <div class="compact-material-actions">
                 <button class="btn btn-sm btn-primary" onclick="viewClientHistory('${client.id}')" 
                         title="Voir détails">
-                    <i class="fas fa-eye"></i>
+                    
                 </button>
             </div>
         </div>
@@ -7637,17 +7637,41 @@ function activateVerificationButton() {
         // Ajouter l'événement click
         verificationButton.onclick = goToVerification;
         
-        // Ajouter un style pour le rendre plus visible
-        verificationButton.style.backgroundColor = '#ffc107';
-        verificationButton.style.color = '#000';
-        verificationButton.style.fontWeight = 'bold';
-        verificationButton.style.border = '2px solid #e0a800';
-        
-        // Ajouter un effet hover
-        verificationButton.addEventListener('mouseenter', function() {
-            this.style.transform = 'scale(1.05)';
-            this.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
-        });
+// Modifier le style pour un bouton vert moderne
+verificationButton.style.backgroundColor = '#28a745';  // Vert moderne
+verificationButton.style.color = 'white';  // Texte blanc
+verificationButton.style.fontWeight = '600';  // Semi-gras
+verificationButton.style.border = 'none';  // Pas de bordure visible
+verificationButton.style.padding = '12px 24px';  // Padding confortable
+verificationButton.style.borderRadius = '8px';  // Coins arrondis
+verificationButton.style.fontSize = '16px';  // Taille de texte
+verificationButton.style.cursor = 'pointer';  // Curseur main
+verificationButton.style.transition = 'all 0.3s ease';  // Transition douce
+verificationButton.style.boxShadow = '0 3px 6px rgba(0,0,0,0.1)';  // Ombre légère
+
+// Ajouter un effet hover moderne
+verificationButton.addEventListener('mouseenter', function() {
+    this.style.backgroundColor = '#218838';  // Vert plus foncé au survol
+    this.style.transform = 'translateY(-2px)';  // Léger déplacement vers le haut
+    this.style.boxShadow = '0 5px 12px rgba(40, 167, 69, 0.25)';  // Ombre accentuée
+});
+
+verificationButton.addEventListener('mouseleave', function() {
+    this.style.backgroundColor = '#28a745';  // Retour au vert initial
+    this.style.transform = 'translateY(0)';  // Retour à la position normale
+    this.style.boxShadow = '0 3px 6px rgba(0,0,0,0.1)';  // Ombre légère
+});
+
+// Optionnel: Effet de clic
+verificationButton.addEventListener('mousedown', function() {
+    this.style.transform = 'translateY(0)';  // Enfoncement visuel
+    this.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';  // Ombre réduite
+});
+
+verificationButton.addEventListener('mouseup', function() {
+    this.style.transform = 'translateY(-2px)';  // Retour au survol
+    this.style.boxShadow = '0 5px 12px rgba(40, 167, 69, 0.25)';  // Ombre du survol
+});
         
         verificationButton.addEventListener('mouseleave', function() {
             this.style.transform = 'scale(1)';
@@ -8795,3 +8819,111 @@ window.selectClientById = selectClientById;
 window.searchClients = function() { displayClientsListEnhanced(); };
 
 console.log("✅ Module modification clients avec toutes les informations et police augmentée !");
+
+// ==================== CORRECTION BOUTON RAPPORT SUR PAGE SIGNATURE ====================
+function addMissingReportButton() {
+    console.log("🔍 Recherche bouton rapport manquant...");
+    
+    const signaturePage = document.getElementById('page-signature');
+    if (!signaturePage) return;
+    
+    // Chercher tous les boutons sur la page signature
+    const buttons = signaturePage.querySelectorAll('button');
+    let reportButtonFound = false;
+    
+    buttons.forEach(btn => {
+        const text = btn.textContent || btn.innerHTML;
+        if (text.includes('Rapport') || text.includes('rapport') || text.includes('PDF')) {
+            console.log("✅ Bouton rapport trouvé:", text.substring(0, 50));
+            reportButtonFound = true;
+            
+            // Vérifier l'attribut onclick
+            const onclickAttr = btn.getAttribute('onclick');
+            console.log("  onclick actuel:", onclickAttr);
+            
+            // Si onclick ne contient pas generatePDFReport, le corriger
+            if (!onclickAttr || !onclickAttr.includes('generatePDFReport')) {
+                console.log("⚠️ Correction du onclick...");
+                
+                // Supprimer l'ancien onclick
+                btn.removeAttribute('onclick');
+                
+                // Ajouter le bon
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("🖱️ Bouton rapport cliqué");
+                    generatePDFReport();
+                });
+                
+                // Ajouter aussi l'attribut pour compatibilité
+                btn.setAttribute('onclick', 'generatePDFReport()');
+            }
+        }
+    });
+    
+    // Si aucun bouton trouvé, en créer un
+    if (!reportButtonFound) {
+        console.log("❌ Aucun bouton rapport trouvé, création...");
+        
+        const pageActions = signaturePage.querySelector('.page-actions');
+        const pageContent = signaturePage.querySelector('.page-content');
+        const container = pageActions || pageContent;
+        
+        if (container) {
+            const reportBtn = document.createElement('button');
+            reportBtn.id = 'generate-report-btn';
+            reportBtn.className = 'btn btn-success';
+            reportBtn.innerHTML = '<i class="fas fa-file-pdf"></i> Rapport de vérification';
+            reportBtn.style.cssText = 'margin: 10px; padding: 12px 24px; font-size: 1.1em;';
+            
+            reportBtn.addEventListener('click', function() {
+                console.log("🖱️ Clic sur nouveau bouton rapport");
+                generatePDFReport();
+            });
+            
+            // Ajouter aussi l'attribut onclick
+            reportBtn.setAttribute('onclick', 'generatePDFReport()');
+            
+            // Ajouter au début du conteneur
+            container.insertBefore(reportBtn, container.firstChild);
+            
+            console.log("✅ Nouveau bouton rapport ajouté");
+        }
+    }
+}
+
+// ==================== SURVEILLER LA NAVIGATION ====================
+// Vérifier si originalNavigate existe déjà avant de le redéclarer
+if (!window._navigationAlreadyWrapped) {
+    // Sauvegarder la fonction originale
+    const originalNavigateFunction = window.navigateTo;
+    
+    if (typeof originalNavigateFunction === 'function') {
+        // Créer une nouvelle version qui surveille la navigation
+        window.navigateTo = function(page) {
+            // Appeler la fonction originale
+            originalNavigateFunction(page);
+            
+            // Si on arrive sur la page signature, ajouter le bouton
+            if (page === 'signature') {
+                setTimeout(addMissingReportButton, 300);
+            }
+        };
+        
+        window._navigationAlreadyWrapped = true;
+        console.log("✅ Surveillance de navigation activée");
+    }
+}
+
+// Exécuter après chargement
+setTimeout(addMissingReportButton, 2000);
+
+// ==================== DIAGNOSTIC SIMPLE ====================
+console.log("🔍 Vérification des fonctions de rapport...");
+console.log("- generatePDFReport:", typeof generatePDFReport);
+console.log("- generatePDF:", typeof generatePDF);
+console.log("- AppState.verifiedMaterialsForReport:", AppState.verifiedMaterialsForReport?.length || 0, "matériel(s)");
+
+
+
